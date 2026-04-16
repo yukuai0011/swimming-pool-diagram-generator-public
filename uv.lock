@@ -10,4 +10,4 @@ resolution-markers = [
 [[package]]
 name = "swimming-pool-diagram-generator"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }

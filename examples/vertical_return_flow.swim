@@ -1,0 +1,26 @@
+swimlaneDiagram
+title 匈牙利售后退货流程（示例）
+
+lane partner "合作服务商"
+lane aftersales "售后部"
+lane logistics "物流部"
+lane warehouse "仓库部"
+lane sales "销售部"
+lane finance "财务部"
+
+node start in partner [start/end] "开始"
+node intake in partner process "合作服务商接收退机"
+node inspect in aftersales decision "是否可修"
+node repair in logistics subprocess "可修-完成修复"
+node scrap in aftersales process "报废"
+node move in warehouse data "从 CNSI DOA 移至 HU DOA"
+node order in sales document "创建 Sales Order"
+node invoice in finance process "开票"
+
+connect start --> intake
+connect intake --> inspect
+connect inspect -->|可修| repair
+connect inspect -->|不可修| scrap
+connect repair --> move
+connect move --> order : 同步销售流程
+connect order --> invoice
