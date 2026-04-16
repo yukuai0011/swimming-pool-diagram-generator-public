@@ -1,0 +1,17 @@
+[project]
+name = "swimming-pool-diagram-generator
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11, <3.12"
+dependencies = [
+    "pandas",
+    "jupyter",
+    "pyarrow",
+]
+
+[tool.uv]
+no-cache = true
+prerelease = "allow"
+preview = true
+upgrade = false
