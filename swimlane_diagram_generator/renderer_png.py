@@ -15,6 +15,7 @@ from .renderer_svg import (
     _compute_lane_width,
     _compute_line_jumps,
     _label_anchor,
+    _resolve_layout_tuning,
     _route_connection,
     _separate_overlapping_vertical_channels,
     _shape_size,
@@ -48,12 +49,21 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     row_gap = 104.0
     body_height = max(320.0, first_row_offset + max(slot_count - 1, 0) * row_gap + 92.0)
 
+    lane_body_y = chart_y + title_height + lane_header_height
+    lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        lane_body_y,
+        first_row_offset,
+        row_gap,
+    )
+
     chart_width = lane_count * lane_width
     chart_height = title_height + lane_header_height + body_height
     image_width = int(round(chart_x * 2 + chart_width))
     image_height = int(round(chart_y * 2 + chart_height))
-
-    lane_body_y = chart_y + title_height + lane_header_height
 
     boxes: dict[str, NodeBox] = {}
     for node in diagram.nodes:
@@ -73,7 +83,12 @@ def render_png_bytes(diagram: Diagram) -> bytes:
             height=node_height,
         )
 
-    route_hints = _build_route_hints(diagram, lane_index_by_id)
+    route_hints = _build_route_hints(
+        diagram,
+        lane_index_by_id,
+        incident_step=incident_step,
+        cross_y_step=cross_y_step,
+    )
     connection_paths: list[list[tuple[float, float]]] = []
     for index, connection in enumerate(diagram.connections):
         source = boxes[connection.source]
@@ -246,8 +261,13 @@ def _draw_node_text(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
 
 
 def _draw_label(draw: ImageDraw.ImageDraw, path_points: list[tuple[float, float]], label_text: str) -> None:
-    label_x, label_y = _label_anchor(path_points)
+    label_x, label_y, orientation = _label_anchor(path_points)
     font = _load_font(12)
+
+    if orientation == "vertical":
+        _draw_vertical_label(draw, label_x, label_y, label_text, font)
+        return
+
     bbox = draw.textbbox((0, 0), label_text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
@@ -261,6 +281,41 @@ def _draw_label(draw: ImageDraw.ImageDraw, path_points: list[tuple[float, float]
 
     draw.rounded_rectangle([left, top, right, bottom], radius=3, fill=WHITE)
     _draw_centered_text(draw, label_x, label_y, label_text, font, LINE_COLOR)
+
+
+def _draw_vertical_label(
+    draw: ImageDraw.ImageDraw,
+    center_x: float,
+    center_y: float,
+    label_text: str,
+    font: ImageFont.ImageFont,
+) -> None:
+    chars = list(label_text) if label_text else ["?"]
+    char_sizes: list[tuple[float, float]] = []
+    for char in chars:
+        sample = char if char.strip() else "A"
+        bbox = draw.textbbox((0, 0), sample, font=font)
+        char_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1]))
+
+    max_char_width = max((size[0] for size in char_sizes), default=8.0)
+    line_height = max((size[1] for size in char_sizes), default=12.0)
+    spacing = 1.0
+    text_height = len(chars) * line_height + max(0, len(chars) - 1) * spacing
+    pad_x = 4.0
+    pad_y = 4.0
+
+    left = center_x - max_char_width / 2 - pad_x
+    top = center_y - text_height / 2 - pad_y
+    right = center_x + max_char_width / 2 + pad_x
+    bottom = center_y + text_height / 2 + pad_y
+
+    draw.rounded_rectangle([left, top, right, bottom], radius=3, fill=WHITE)
+
+    current_y = top + pad_y + line_height / 2
+    for char in chars:
+        if char.strip():
+            _draw_centered_text(draw, center_x, current_y, char, font, LINE_COLOR)
+        current_y += line_height + spacing
 
 
 def _draw_jump_png(draw: ImageDraw.ImageDraw, jump: LineJump) -> None:

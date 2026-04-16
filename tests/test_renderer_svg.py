@@ -5,6 +5,7 @@ from swimlane_diagram_generator.renderer_svg import (
     _assign_vertical_slots,
     _compute_lane_width,
     _compute_line_jumps,
+    _label_anchor,
     render_svg,
 )
 
@@ -87,6 +88,7 @@ class SvgRendererTests(unittest.TestCase):
         self.assertIn("payload", svg)
         self.assertIn("<polygon", svg)  # decision/data shapes
         self.assertIn("<path", svg)     # document shape
+        self.assertIn("rotate(-90", svg)
 
     def test_compact_layout_reuses_vertical_rows(self) -> None:
         diagram = parse_diagram(COMPACT_DSL)
@@ -115,6 +117,16 @@ class SvgRendererTests(unittest.TestCase):
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
         lane_width = _compute_lane_width(diagram, lane_index_by_id)
         self.assertGreater(lane_width, 210.0)
+
+    def test_label_anchor_orientation_detection(self) -> None:
+        vertical_path = [(10.0, 10.0), (40.0, 10.0), (40.0, 90.0), (90.0, 90.0)]
+        horizontal_path = [(10.0, 10.0), (10.0, 40.0), (90.0, 40.0), (90.0, 80.0)]
+
+        _, _, vertical_orientation = _label_anchor(vertical_path)
+        _, _, horizontal_orientation = _label_anchor(horizontal_path)
+
+        self.assertEqual(vertical_orientation, "vertical")
+        self.assertEqual(horizontal_orientation, "horizontal")
 
 
 if __name__ == "__main__":

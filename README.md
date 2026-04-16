@@ -15,8 +15,10 @@ Current scope (v0.1):
   - `document`
   - `data`
 - Connection lines with optional label/explanation text
+- Orientation-aware labels (vertical labels on vertical connector segments)
 - Crossing-line jump bumps (Visio-style bridge effect)
 - Adaptive lane width under high connection density to reduce full line overlap
+- Iterative readability pass: expands lane width further if connector channels are still visually dense
 - Flow order: **lanes → nodes → connections**
 
 ## Quick start (with uv)

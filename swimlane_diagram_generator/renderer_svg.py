@@ -26,6 +26,7 @@ class RouteHint:
     same_slot: int = 0
     start_offset: float = 0.0
     end_offset: float = 0.0
+    cross_y_offset: float = 0.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,40 +68,40 @@ def render_svg(diagram: Diagram) -> str:
     row_gap = 104.0
     body_height = max(320.0, first_row_offset + max(slot_count - 1, 0) * row_gap + 92.0)
 
+    lane_body_y = chart_y + title_height + lane_header_height
+    lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        lane_body_y,
+        first_row_offset,
+        row_gap,
+    )
+
     chart_width = lane_count * lane_width
     chart_height = title_height + lane_header_height + body_height
     svg_width = chart_x * 2 + chart_width
     svg_height = chart_y * 2 + chart_height
 
-    lane_body_y = chart_y + title_height + lane_header_height
-
-    boxes: dict[str, NodeBox] = {}
-    for node in diagram.nodes:
-        lane_index = lane_index_by_id[node.lane_id]
-        node_width, node_height = _shape_size(node.shape)
-        slot = slot_by_node[node.id]
-        x = chart_x + lane_index * lane_width + lane_width / 2
-        y = lane_body_y + first_row_offset + slot * row_gap
-        boxes[node.id] = NodeBox(
-            node_id=node.id,
-            lane_index=lane_index,
-            shape=node.shape,
-            text=node.text,
-            x=x,
-            y=y,
-            width=node_width,
-            height=node_height,
-        )
-
-    route_hints = _build_route_hints(diagram, lane_index_by_id)
-    connection_paths: list[list[tuple[float, float]]] = []
-    for index, connection in enumerate(diagram.connections):
-        source = boxes[connection.source]
-        target = boxes[connection.target]
-        path = _route_connection(source, target, route_hints[index], lane_width)
-        connection_paths.append(path)
-
-    connection_paths = _separate_overlapping_vertical_channels(connection_paths)
+    boxes = _build_boxes(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        chart_x,
+        lane_body_y,
+        first_row_offset,
+        row_gap,
+    )
+    connection_paths = _build_connection_paths(
+        diagram,
+        boxes,
+        lane_index_by_id,
+        lane_width,
+        incident_step=incident_step,
+        cross_y_step=cross_y_step,
+    )
 
     line_jumps = _compute_line_jumps(connection_paths)
 
@@ -155,16 +156,7 @@ def render_svg(diagram: Diagram) -> str:
     for connection, path_points in zip(diagram.connections, connection_paths):
         if not connection.label:
             continue
-        label_x, label_y = _label_anchor(path_points)
-        label_text = connection.label
-        label_width = max(34.0, len(label_text) * 7.2 + 12.0)
-        parts.append(
-            f'  <rect x="{_fmt(label_x - label_width / 2)}" y="{_fmt(label_y - 15)}" width="{_fmt(label_width)}" height="20" fill="#ffffff" fill-opacity="0.92" rx="3" />'
-        )
-        parts.append(
-            f'  <text x="{_fmt(label_x)}" y="{_fmt(label_y)}" text-anchor="middle" '
-            f'font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(label_text)}</text>'
-        )
+        parts.extend(_draw_connection_label_svg(path_points, connection.label))
 
     # Nodes on top of everything.
     for node in diagram.nodes:
@@ -268,6 +260,164 @@ def _compute_lane_width(diagram: Diagram, lane_index_by_id: dict[str, int]) -> f
     return max(base_width, shape_need, title_need, pressure_need)
 
 
+def _resolve_lane_width_for_clarity(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    slot_by_node: dict[str, int],
+    initial_lane_width: float,
+    lane_body_y: float,
+    first_row_offset: float,
+    row_gap: float,
+) -> float:
+    lane_width, _, _ = _resolve_layout_tuning(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        initial_lane_width,
+        lane_body_y,
+        first_row_offset,
+        row_gap,
+    )
+    return lane_width
+
+
+def _resolve_layout_tuning(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    slot_by_node: dict[str, int],
+    initial_lane_width: float,
+    lane_body_y: float,
+    first_row_offset: float,
+    row_gap: float,
+) -> tuple[float, float, float]:
+    lane_width = initial_lane_width
+    incident_step = 10.0
+    cross_y_step = 6.0
+    target_dense_pairs = max(1, len(diagram.connections) // 6)
+    best_result = (lane_width, incident_step, cross_y_step)
+    best_dense_pairs = float("inf")
+
+    for attempt in range(6):
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            chart_x=18.0,
+            lane_body_y=lane_body_y,
+            first_row_offset=first_row_offset,
+            row_gap=row_gap,
+        )
+        connection_paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            lane_width,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        dense_pairs = _count_close_parallel_segments(connection_paths)
+
+        if dense_pairs < best_dense_pairs:
+            best_dense_pairs = dense_pairs
+            best_result = (lane_width, incident_step, cross_y_step)
+
+        if dense_pairs <= target_dense_pairs:
+            return lane_width, incident_step, cross_y_step
+
+        if attempt % 2 == 0:
+            incident_step += 2.0
+            cross_y_step += 1.5
+        else:
+            lane_width += 16.0
+
+    return best_result
+
+
+def _build_boxes(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    slot_by_node: dict[str, int],
+    lane_width: float,
+    chart_x: float,
+    lane_body_y: float,
+    first_row_offset: float,
+    row_gap: float,
+) -> dict[str, NodeBox]:
+    boxes: dict[str, NodeBox] = {}
+    for node in diagram.nodes:
+        lane_index = lane_index_by_id[node.lane_id]
+        node_width, node_height = _shape_size(node.shape)
+        slot = slot_by_node[node.id]
+        x = chart_x + lane_index * lane_width + lane_width / 2
+        y = lane_body_y + first_row_offset + slot * row_gap
+        boxes[node.id] = NodeBox(
+            node_id=node.id,
+            lane_index=lane_index,
+            shape=node.shape,
+            text=node.text,
+            x=x,
+            y=y,
+            width=node_width,
+            height=node_height,
+        )
+    return boxes
+
+
+def _build_connection_paths(
+    diagram: Diagram,
+    boxes: dict[str, NodeBox],
+    lane_index_by_id: dict[str, int],
+    lane_width: float,
+    *,
+    incident_step: float = 10.0,
+    cross_y_step: float = 6.0,
+) -> list[list[tuple[float, float]]]:
+    route_hints = _build_route_hints(
+        diagram,
+        lane_index_by_id,
+        incident_step=incident_step,
+        cross_y_step=cross_y_step,
+    )
+    connection_paths: list[list[tuple[float, float]]] = []
+    for index, connection in enumerate(diagram.connections):
+        source = boxes[connection.source]
+        target = boxes[connection.target]
+        connection_paths.append(_route_connection(source, target, route_hints[index], lane_width))
+    return _separate_overlapping_vertical_channels(connection_paths)
+
+
+def _count_close_parallel_segments(connection_paths: list[list[tuple[float, float]]]) -> int:
+    segments: list[_Segment] = []
+    for line_index, path_points in enumerate(connection_paths):
+        segments.extend(_build_segments(path_points, line_index))
+
+    dense_pairs = 0
+    for index, first in enumerate(segments):
+        for second in segments[index + 1 :]:
+            if first.line_index == second.line_index:
+                continue
+            if _are_segments_close_parallel(first, second):
+                dense_pairs += 1
+    return dense_pairs
+
+
+def _are_segments_close_parallel(first: _Segment, second: _Segment) -> bool:
+    if first.orientation != second.orientation:
+        return False
+
+    if first.orientation == "horizontal":
+        if abs(first.y1 - second.y1) > 11.0:
+            return False
+        overlap = _range_overlap(first.x1, first.x2, second.x1, second.x2)
+        return overlap >= 18.0
+
+    if abs(first.x1 - second.x1) > 11.0:
+        return False
+    overlap = _range_overlap(first.y1, first.y2, second.y1, second.y2)
+    return overlap >= 18.0
+
+
 def _estimate_text_width(text: str, font_size: float) -> float:
     unit = font_size / 14.0
     width = 0.0
@@ -297,24 +447,20 @@ def _compute_boundary_pressure(diagram: Diagram, lane_index_by_id: dict[str, int
     return max(boundary_counts, default=0)
 
 
-def _build_route_hints(diagram: Diagram, lane_index_by_id: dict[str, int]) -> list[RouteHint]:
+def _build_route_hints(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    *,
+    incident_step: float = 10.0,
+    cross_y_step: float = 6.0,
+) -> list[RouteHint]:
     incident_by_node: dict[str, list[tuple[int, str]]] = defaultdict(list)
 
     for index, connection in enumerate(diagram.connections):
         incident_by_node[connection.source].append((index, "source"))
         incident_by_node[connection.target].append((index, "target"))
 
-    start_offsets: dict[int, float] = {}
-    end_offsets: dict[int, float] = {}
-
-    for entries in incident_by_node.values():
-        ordered_entries = sorted(entries, key=lambda item: (item[0], 0 if item[1] == "source" else 1))
-        offsets = _centered_offsets(len(ordered_entries), 10.0)
-        for (connection_index, role), offset in zip(ordered_entries, offsets):
-            if role == "source":
-                start_offsets[connection_index] = offset
-            else:
-                end_offsets[connection_index] = offset
+    start_offsets, end_offsets = _distribute_incident_offsets(incident_by_node, incident_step)
 
     node_lane = {node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes}
     same_lane_counter: dict[int, int] = defaultdict(int)
@@ -324,16 +470,13 @@ def _build_route_hints(diagram: Diagram, lane_index_by_id: dict[str, int]) -> li
     for index, connection in enumerate(diagram.connections):
         source_lane = node_lane[connection.source]
         target_lane = node_lane[connection.target]
-
-        if source_lane == target_lane:
-            same_slot = same_lane_counter[source_lane]
-            same_lane_counter[source_lane] += 1
-            cross_slot = 0
-        else:
-            route_key = (source_lane, target_lane)
-            cross_slot = cross_lane_counter[route_key]
-            cross_lane_counter[route_key] += 1
-            same_slot = 0
+        same_slot, cross_slot, cross_y_offset = _next_route_slots(
+            source_lane,
+            target_lane,
+            same_lane_counter,
+            cross_lane_counter,
+            cross_y_step,
+        )
 
         hints.append(
             RouteHint(
@@ -341,10 +484,47 @@ def _build_route_hints(diagram: Diagram, lane_index_by_id: dict[str, int]) -> li
                 same_slot=same_slot,
                 start_offset=start_offsets.get(index, 0.0),
                 end_offset=end_offsets.get(index, 0.0),
+                cross_y_offset=cross_y_offset,
             )
         )
 
     return hints
+
+
+def _distribute_incident_offsets(
+    incident_by_node: dict[str, list[tuple[int, str]]],
+    incident_step: float,
+) -> tuple[dict[int, float], dict[int, float]]:
+    start_offsets: dict[int, float] = {}
+    end_offsets: dict[int, float] = {}
+    for entries in incident_by_node.values():
+        ordered_entries = sorted(entries, key=lambda item: (item[0], 0 if item[1] == "source" else 1))
+        offsets = _centered_offsets(len(ordered_entries), incident_step)
+        for (connection_index, role), offset in zip(ordered_entries, offsets):
+            if role == "source":
+                start_offsets[connection_index] = offset
+            else:
+                end_offsets[connection_index] = offset
+    return start_offsets, end_offsets
+
+
+def _next_route_slots(
+    source_lane: int,
+    target_lane: int,
+    same_lane_counter: dict[int, int],
+    cross_lane_counter: dict[tuple[int, int], int],
+    cross_y_step: float,
+) -> tuple[int, int, float]:
+    if source_lane == target_lane:
+        same_slot = same_lane_counter[source_lane]
+        same_lane_counter[source_lane] += 1
+        return same_slot, 0, 0.0
+
+    route_key = (source_lane, target_lane)
+    cross_slot = cross_lane_counter[route_key]
+    cross_lane_counter[route_key] += 1
+    cross_y_offset = _stagger_value(cross_slot, step=cross_y_step)
+    return 0, cross_slot, cross_y_offset
 
 
 def _centered_offsets(count: int, step: float) -> list[float]:
@@ -368,14 +548,17 @@ def _route_connection(
     hint: RouteHint,
     lane_width: float,
 ) -> list[tuple[float, float]]:
+    source_offset = _clamp_node_offset(source.height, hint.start_offset)
+    target_offset = _clamp_node_offset(target.height, hint.end_offset)
+
     if source.lane_index == target.lane_index:
         is_downward = target.y >= source.y
         if is_downward:
-            start = (source.x + hint.start_offset, source.y + source.height / 2)
-            end = (target.x + hint.end_offset, target.y - target.height / 2)
+            start = (source.x + source_offset, source.y + source.height / 2)
+            end = (target.x + target_offset, target.y - target.height / 2)
         else:
-            start = (source.x + hint.start_offset, source.y - source.height / 2)
-            end = (target.x + hint.end_offset, target.y + target.height / 2)
+            start = (source.x + source_offset, source.y - source.height / 2)
+            end = (target.x + target_offset, target.y + target.height / 2)
 
         detour = _stagger_value(hint.same_slot + 1, step=14.0)
         max_detour = max(12.0, lane_width / 2 - max(source.width, target.width) / 2 - 14.0)
@@ -384,13 +567,14 @@ def _route_connection(
         return [start, (detour_x, start[1]), (detour_x, end[1]), end]
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
+    cross_y_offset = _clamp_node_offset(min(source.height, target.height), hint.cross_y_offset)
     start = (
         source.x + direction * source.width / 2,
-        source.y + hint.start_offset,
+        source.y + source_offset + cross_y_offset,
     )
     end = (
         target.x - direction * target.width / 2,
-        target.y + hint.end_offset,
+        target.y + target_offset + cross_y_offset,
     )
 
     mid_x = (start[0] + end[0]) / 2 + direction * 8.0 + _stagger_value(hint.cross_slot, step=14.0)
@@ -400,6 +584,11 @@ def _route_connection(
         mid_x = max(min(mid_x, start[0] - 16.0), end[0] + 16.0)
 
     return [start, (mid_x, start[1]), (mid_x, end[1]), end]
+
+
+def _clamp_node_offset(node_height: float, offset: float) -> float:
+    limit = max(8.0, node_height / 2 - 6.0)
+    return max(-limit, min(limit, offset))
 
 
 def _separate_overlapping_vertical_channels(
@@ -588,6 +777,24 @@ def _draw_jump_svg(jump: LineJump) -> list[str]:
     return fragments
 
 
+def _draw_connection_label_svg(path_points: list[tuple[float, float]], label_text: str) -> list[str]:
+    label_x, label_y, orientation = _label_anchor(path_points)
+
+    if orientation == "vertical":
+        label_width = 20.0
+        label_height = max(28.0, len(label_text) * 7.0 + 10.0)
+        return [
+            f'  <rect x="{_fmt(label_x - label_width / 2)}" y="{_fmt(label_y - label_height / 2)}" width="{_fmt(label_width)}" height="{_fmt(label_height)}" fill="#ffffff" fill-opacity="0.92" rx="3" />',
+            f'  <text x="{_fmt(label_x)}" y="{_fmt(label_y)}" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 {_fmt(label_x)} {_fmt(label_y)})" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(label_text)}</text>',
+        ]
+
+    label_width = max(34.0, len(label_text) * 7.2 + 12.0)
+    return [
+        f'  <rect x="{_fmt(label_x - label_width / 2)}" y="{_fmt(label_y - 10)}" width="{_fmt(label_width)}" height="20" fill="#ffffff" fill-opacity="0.92" rx="3" />',
+        f'  <text x="{_fmt(label_x)}" y="{_fmt(label_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(label_text)}</text>',
+    ]
+
+
 def _text_capacity(box: NodeBox) -> int:
     width = box.width
     if box.shape is Shape.DECISION:
@@ -715,14 +922,20 @@ def _topological_order(
     return result
 
 
-def _label_anchor(path_points: list[tuple[float, float]]) -> tuple[float, float]:
+def _label_anchor(path_points: list[tuple[float, float]]) -> tuple[float, float, str]:
     if len(path_points) >= 4:
-        x = (path_points[1][0] + path_points[2][0]) / 2
-        y = (path_points[1][1] + path_points[2][1]) / 2 - 4.0
-        return x, y
-    start = path_points[0]
-    end = path_points[-1]
-    return (start[0] + end[0]) / 2, (start[1] + end[1]) / 2 - 4.0
+        start = path_points[1]
+        end = path_points[2]
+    else:
+        start = path_points[0]
+        end = path_points[-1]
+
+    x = (start[0] + end[0]) / 2
+    y = (start[1] + end[1]) / 2
+    orientation = "vertical" if abs(end[0] - start[0]) < abs(end[1] - start[1]) else "horizontal"
+    if orientation == "horizontal":
+        y -= 4.0
+    return x, y, orientation
 
 
 def _fmt(value: float) -> str:
