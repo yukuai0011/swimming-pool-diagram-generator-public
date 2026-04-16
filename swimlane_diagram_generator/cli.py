@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from .parser import DiagramSyntaxError, parse_diagram
+from .renderer_png import render_png_bytes
 from .renderer_svg import render_svg
 
 EXAMPLE_DSL = """swimlaneDiagram
@@ -60,7 +61,7 @@ connect classify --> sales_order : 先建单预留
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="swimlane-gen",
-        description="Generate a vertical swimlane SVG from Mermaid-like DSL.",
+        description="Generate a vertical swimlane diagram (SVG/PNG) from Mermaid-like DSL.",
     )
     parser.add_argument(
         "input",
@@ -70,7 +71,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-o",
         "--output",
-        help="Output SVG path. Defaults to <input>.svg (or diagram.svg for stdin).",
+        help="Output diagram path. Defaults to <input>.<format> (or diagram.<format> for stdin).",
+    )
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["svg", "png"],
+        help="Output format. If omitted, inferred from --output extension; defaults to svg.",
     )
     parser.add_argument(
         "--example",
@@ -94,10 +101,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         source_text = _read_input(args.input)
         diagram = parse_diagram(source_text)
-        svg = render_svg(diagram)
-        output_path = _resolve_output_path(args.input, args.output)
+        output_format = _resolve_output_format(args.output, args.format)
+        output_path = _resolve_output_path(args.input, args.output, output_format)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(svg, encoding="utf-8")
+
+        if output_format == "png":
+            output_path.write_bytes(render_png_bytes(diagram))
+        else:
+            output_path.write_text(render_svg(diagram), encoding="utf-8")
+
         print(f"Generated diagram: {output_path}")
         return 0
     except DiagramSyntaxError as exc:
@@ -114,9 +126,21 @@ def _read_input(input_arg: str) -> str:
     return Path(input_arg).read_text(encoding="utf-8")
 
 
-def _resolve_output_path(input_arg: str, output_arg: str | None) -> Path:
+def _resolve_output_format(output_arg: str | None, format_arg: str | None) -> str:
+    if format_arg:
+        return format_arg
+
+    if output_arg:
+        suffix = Path(output_arg).suffix.lower().lstrip(".")
+        if suffix in {"svg", "png"}:
+            return suffix
+
+    return "svg"
+
+
+def _resolve_output_path(input_arg: str, output_arg: str | None, output_format: str) -> Path:
     if output_arg:
         return Path(output_arg)
     if input_arg == "-":
-        return Path("diagram.svg")
-    return Path(input_arg).with_suffix(".svg")
+        return Path(f"diagram.{output_format}")
+    return Path(input_arg).with_suffix(f".{output_format}")

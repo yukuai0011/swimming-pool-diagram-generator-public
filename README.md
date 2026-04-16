@@ -1,11 +1,12 @@
 # swimming-pool-diagram-generator
 
-Generate **vertical swimlane process diagrams** (similar to classic Visio swimlanes) from a Mermaid-like text DSL, and export to SVG.
+Generate **vertical swimlane process diagrams** (similar to classic Visio swimlanes) from a Mermaid-like text DSL, and export to SVG/PNG.
 
 Current scope (v0.1):
 
 - Vertical swimlanes (lanes are columns)
 - Compact auto layout (packs independent nodes into shared rows for better space efficiency)
+- Output formats: `svg` and `png`
 - Node types:
   - `process`
   - `decision`
@@ -14,6 +15,8 @@ Current scope (v0.1):
   - `document`
   - `data`
 - Connection lines with optional label/explanation text
+- Crossing-line jump bumps (Visio-style bridge effect)
+- Adaptive lane width under high connection density to reduce full line overlap
 - Flow order: **lanes → nodes → connections**
 
 ## Quick start (with uv)
@@ -29,6 +32,14 @@ Current scope (v0.1):
 3. Render an SVG from the included sample:
 
 	`uv run swimlane-gen examples/vertical_return_flow.swim -o output/vertical_return_flow.svg`
+
+3.1 Render PNG (auto-detected from output suffix):
+
+  `uv run swimlane-gen examples/vertical_return_flow.swim -o output/vertical_return_flow.png`
+
+3.2 Or specify format explicitly:
+
+  `uv run swimlane-gen examples/vertical_return_flow.swim -f png`
 
 4. Render a more complex sample (cross-lane, loopback, and crossing-line scenarios):
 
@@ -74,11 +85,18 @@ connect move --> order : 同步销售流程
   - `A -->|label| B`
   - `A --> B : label`
 
+### Output selection
+
+- If `--format` is provided, it controls output (`svg` or `png`).
+- Otherwise, format is inferred from `--output` suffix.
+- Default is `svg`.
+
 ## Project structure
 
 - `swimlane_diagram_generator/model.py`: dataclasses + shape enum
 - `swimlane_diagram_generator/parser.py`: DSL parser + validation
 - `swimlane_diagram_generator/renderer_svg.py`: SVG layout + rendering
+- `swimlane_diagram_generator/renderer_png.py`: PNG layout + rendering
 - `swimlane_diagram_generator/cli.py`: command-line entrypoint
 - `examples/vertical_return_flow.swim`: sample DSL
 - `examples/complex_cross_lane_flow.swim`: advanced DSL with branching + crossing connectors

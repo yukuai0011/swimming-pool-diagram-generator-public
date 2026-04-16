@@ -1,7 +1,12 @@
 import unittest
 
 from swimlane_diagram_generator.parser import parse_diagram
-from swimlane_diagram_generator.renderer_svg import _assign_vertical_slots, render_svg
+from swimlane_diagram_generator.renderer_svg import (
+    _assign_vertical_slots,
+    _compute_lane_width,
+    _compute_line_jumps,
+    render_svg,
+)
 
 
 RENDER_DSL = """swimlaneDiagram
@@ -43,6 +48,31 @@ connect n2 --> n5
 connect n3 --> n6
 """
 
+PRESSURE_DSL = """swimlaneDiagram
+title Boundary Pressure
+
+lane l1 "Lane A"
+lane l2 "Lane B"
+lane l3 "Lane C"
+lane l4 "Lane D"
+
+node a1 in l1 process "A1"
+node a2 in l1 process "A2"
+node b1 in l2 process "B1"
+node b2 in l2 process "B2"
+node c1 in l3 process "C1"
+node c2 in l3 process "C2"
+node d1 in l4 process "D1"
+node d2 in l4 process "D2"
+
+connect a1 --> d1
+connect a2 --> d2
+connect b1 --> d1
+connect b2 --> d2
+connect c1 --> a1
+connect c2 --> a2
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -70,6 +100,21 @@ class SvgRendererTests(unittest.TestCase):
         self.assertEqual(slot_by_node["n4"], 1)
         self.assertEqual(slot_by_node["n5"], 1)
         self.assertEqual(slot_by_node["n6"], 1)
+
+    def test_compute_line_jumps_detects_crossing(self) -> None:
+        paths = [
+            [(10.0, 10.0), (60.0, 10.0), (60.0, 60.0), (110.0, 60.0)],
+            [(30.0, 0.0), (30.0, 40.0), (90.0, 40.0), (90.0, 90.0)],
+        ]
+        jumps = _compute_line_jumps(paths)
+
+        self.assertTrue(any(abs(jump.x - 60.0) < 0.1 and abs(jump.y - 40.0) < 0.1 for jump in jumps))
+
+    def test_lane_width_expands_under_pressure(self) -> None:
+        diagram = parse_diagram(PRESSURE_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        lane_width = _compute_lane_width(diagram, lane_index_by_id)
+        self.assertGreater(lane_width, 210.0)
 
 
 if __name__ == "__main__":
