@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
-import re
 
 _SYMBOL_ID_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 

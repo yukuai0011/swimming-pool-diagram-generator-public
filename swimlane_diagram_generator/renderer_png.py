@@ -94,10 +94,28 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     image = Image.new("RGB", (image_width, image_height), WHITE)
     draw = ImageDraw.Draw(image)
 
-    _draw_rect(draw, chart_x, chart_y, chart_width, chart_height, fill=WHITE, outline=LINE_COLOR, stroke_width=2)
+    _draw_rect(
+        draw,
+        chart_x,
+        chart_y,
+        chart_width,
+        chart_height,
+        fill=WHITE,
+        outline=LINE_COLOR,
+        stroke_width=2,
+    )
 
     # Title band
-    _draw_rect(draw, chart_x, chart_y, chart_width, title_height, fill=WHITE, outline=LINE_COLOR, stroke_width=2)
+    _draw_rect(
+        draw,
+        chart_x,
+        chart_y,
+        chart_width,
+        title_height,
+        fill=WHITE,
+        outline=LINE_COLOR,
+        stroke_width=2,
+    )
     if diagram.title:
         _draw_centered_text(
             draw,
@@ -112,7 +130,16 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     for lane in diagram.lanes:
         lane_x = chart_x + lane.index * lane_width
         header_y = chart_y + title_height
-        _draw_rect(draw, lane_x, header_y, lane_width, lane_header_height, fill=LANE_HEADER, outline=LINE_COLOR, stroke_width=1)
+        _draw_rect(
+            draw,
+            lane_x,
+            header_y,
+            lane_width,
+            lane_header_height,
+            fill=LANE_HEADER,
+            outline=LINE_COLOR,
+            stroke_width=1,
+        )
         _draw_centered_text(
             draw,
             lane_x + lane_width / 2,
@@ -121,7 +148,16 @@ def render_png_bytes(diagram: Diagram) -> bytes:
             _load_font(14),
             LINE_COLOR,
         )
-        _draw_rect(draw, lane_x, lane_body_y, lane_width, body_height, fill=LANE_BODY, outline=LINE_COLOR, stroke_width=1)
+        _draw_rect(
+            draw,
+            lane_x,
+            lane_body_y,
+            lane_width,
+            body_height,
+            fill=LANE_BODY,
+            outline=LINE_COLOR,
+            stroke_width=1,
+        )
 
     # Connection lines
     for path_points in connection_paths:
@@ -164,7 +200,12 @@ def _draw_rect(
     outline: str,
     stroke_width: int = 1,
 ) -> None:
-    draw.rectangle([x, y, x + rect_width, y + rect_height], fill=fill, outline=outline, width=stroke_width)
+    draw.rectangle(
+        [x, y, x + rect_width, y + rect_height],
+        fill=fill,
+        outline=outline,
+        width=stroke_width,
+    )
 
 
 def _draw_centered_text(
@@ -193,9 +234,21 @@ def _draw_node_png(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
     bottom = top + box.height
 
     if box.shape is Shape.PROCESS:
-        draw.rounded_rectangle([left, top, right, bottom], radius=4, fill=WHITE, outline=LINE_COLOR, width=2)
+        draw.rounded_rectangle(
+            [left, top, right, bottom],
+            radius=4,
+            fill=WHITE,
+            outline=LINE_COLOR,
+            width=2,
+        )
     elif box.shape is Shape.START_END:
-        draw.rounded_rectangle([left, top, right, bottom], radius=box.height / 2, fill=WHITE, outline=LINE_COLOR, width=2)
+        draw.rounded_rectangle(
+            [left, top, right, bottom],
+            radius=box.height / 2,
+            fill=WHITE,
+            outline=LINE_COLOR,
+            width=2,
+        )
     elif box.shape is Shape.DECISION:
         points = [
             (box.x, top),
@@ -205,10 +258,20 @@ def _draw_node_png(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
         ]
         draw.polygon(points, fill=WHITE, outline=LINE_COLOR)
     elif box.shape is Shape.SUBPROCESS:
-        draw.rounded_rectangle([left, top, right, bottom], radius=4, fill=WHITE, outline=LINE_COLOR, width=2)
+        draw.rounded_rectangle(
+            [left, top, right, bottom],
+            radius=4,
+            fill=WHITE,
+            outline=LINE_COLOR,
+            width=2,
+        )
         inset = min(12.0, box.width * 0.12)
-        draw.line([(left + inset, top), (left + inset, bottom)], fill=LINE_COLOR, width=2)
-        draw.line([(right - inset, top), (right - inset, bottom)], fill=LINE_COLOR, width=2)
+        draw.line(
+            [(left + inset, top), (left + inset, bottom)], fill=LINE_COLOR, width=2
+        )
+        draw.line(
+            [(right - inset, top), (right - inset, bottom)], fill=LINE_COLOR, width=2
+        )
     elif box.shape is Shape.DOCUMENT:
         wave = min(14.0, box.height * 0.2)
         points = [
@@ -251,7 +314,9 @@ def _draw_node_text(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
         )
 
 
-def _draw_label(draw: ImageDraw.ImageDraw, path_points: list[tuple[float, float]], label_text: str) -> None:
+def _draw_label(
+    draw: ImageDraw.ImageDraw, path_points: list[tuple[float, float]], label_text: str
+) -> None:
     label_x, label_y, orientation = _label_anchor(path_points)
     font = _load_font(12)
 

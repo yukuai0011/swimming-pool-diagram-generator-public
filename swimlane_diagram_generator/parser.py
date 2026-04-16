@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
 import shlex
+from dataclasses import dataclass
 
 from .model import (
     Connection,
@@ -23,7 +23,9 @@ _CONNECTION_WITH_OPTIONAL_SUFFIX_LABEL = re.compile(
 
 
 class DiagramSyntaxError(ValueError):
-    def __init__(self, message: str, line_no: int | None = None, line_text: str | None = None) -> None:
+    def __init__(
+        self, message: str, line_no: int | None = None, line_text: str | None = None
+    ) -> None:
         self.message = message
         self.line_no = line_no
         self.line_text = line_text
@@ -83,9 +85,13 @@ def parse_diagram(source: str) -> Diagram:
                     line_no,
                     raw_line,
                 )
-            lane_id, lane_title = _parse_lane(line, line_no, raw_line, lane_index=len(lanes))
+            lane_id, lane_title = _parse_lane(
+                line, line_no, raw_line, lane_index=len(lanes)
+            )
             if lane_id in lane_id_lookup:
-                raise DiagramSyntaxError(f"Duplicate lane id '{lane_id}'.", line_no, raw_line)
+                raise DiagramSyntaxError(
+                    f"Duplicate lane id '{lane_id}'.", line_no, raw_line
+                )
             lane = Lane(id=lane_id, title=lane_title, index=len(lanes))
             lanes.append(lane)
             lane_id_lookup[lane.id] = lane.id
@@ -98,7 +104,9 @@ def parse_diagram(source: str) -> Diagram:
 
         if keyword == "node":
             if not lanes:
-                raise DiagramSyntaxError("Define at least one lane before nodes.", line_no, raw_line)
+                raise DiagramSyntaxError(
+                    "Define at least one lane before nodes.", line_no, raw_line
+                )
             if phase == 2:
                 raise DiagramSyntaxError(
                     "Node declarations must come before connection declarations.",
@@ -115,7 +123,9 @@ def parse_diagram(source: str) -> Diagram:
                     raw_line,
                 )
             if parsed_node.node_id in node_lookup:
-                raise DiagramSyntaxError(f"Duplicate node id '{parsed_node.node_id}'.", line_no, raw_line)
+                raise DiagramSyntaxError(
+                    f"Duplicate node id '{parsed_node.node_id}'.", line_no, raw_line
+                )
 
             node = Node(
                 id=parsed_node.node_id,
@@ -170,7 +180,9 @@ def _split_tokens(line: str, line_no: int, raw_line: str) -> list[str]:
     try:
         return shlex.split(line, comments=False, posix=True)
     except ValueError as exc:
-        raise DiagramSyntaxError(f"Cannot parse line: {exc}", line_no, raw_line) from exc
+        raise DiagramSyntaxError(
+            f"Cannot parse line: {exc}", line_no, raw_line
+        ) from exc
 
 
 def _strip_matching_quotes(value: str) -> str:
@@ -190,7 +202,9 @@ def _parse_title(line: str, line_no: int, raw_line: str) -> str:
     return text
 
 
-def _parse_lane(line: str, line_no: int, raw_line: str, lane_index: int) -> tuple[str, str]:
+def _parse_lane(
+    line: str, line_no: int, raw_line: str, lane_index: int
+) -> tuple[str, str]:
     tokens = _split_tokens(line, line_no, raw_line)
     if len(tokens) < 2:
         raise DiagramSyntaxError("Lane statement is incomplete.", line_no, raw_line)
@@ -221,7 +235,9 @@ def _parse_node(line: str, line_no: int, raw_line: str) -> _ParsedNode:
             raw_line,
         )
     if tokens[2].lower() != "in":
-        raise DiagramSyntaxError("Expected keyword 'in' in node declaration.", line_no, raw_line)
+        raise DiagramSyntaxError(
+            "Expected keyword 'in' in node declaration.", line_no, raw_line
+        )
 
     node_id = canonical_symbol_id(tokens[1], kind="Node id")
     lane_ref = tokens[3]

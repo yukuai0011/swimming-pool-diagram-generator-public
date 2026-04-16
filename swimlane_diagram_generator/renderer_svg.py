@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
 from html import escape
-import textwrap
 
 from .model import Diagram, Node, Shape
 
@@ -124,8 +124,8 @@ def render_svg(diagram: Diagram) -> str:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(svg_width)}" height="{_fmt(svg_height)}" '
         f'viewBox="0 0 {_fmt(svg_width)} {_fmt(svg_height)}">',
         "  <defs>",
-        "    <marker id=\"arrowhead\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\">",
-        "      <path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#111827\" />",
+        '    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">',
+        '      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827" />',
         "    </marker>",
         "  </defs>",
         f'  <rect x="{_fmt(chart_x)}" y="{_fmt(chart_y)}" width="{_fmt(chart_width)}" height="{_fmt(chart_height)}" fill="#ffffff" stroke="#111827" stroke-width="1.3" />',
@@ -247,7 +247,9 @@ def _draw_node(box: NodeBox) -> list[str]:
     )
     for index, line in enumerate(lines):
         dy = "0" if index == 0 else _fmt(line_height)
-        fragments.append(f'    <tspan x="{_fmt(box.x)}" dy="{dy}">{escape(line)}</tspan>')
+        fragments.append(
+            f'    <tspan x="{_fmt(box.x)}" dy="{dy}">{escape(line)}</tspan>'
+        )
     fragments.append("  </text>")
     return fragments
 
@@ -268,8 +270,14 @@ def _shape_size(shape: Shape) -> tuple[float, float]:
 
 def _compute_lane_width(diagram: Diagram, lane_index_by_id: dict[str, int]) -> float:
     base_width = 210.0
-    shape_need = max((_shape_size(node.shape)[0] for node in diagram.nodes), default=144.0) + 42.0
-    title_need = max((_estimate_text_width(lane.title, 14) + 32.0 for lane in diagram.lanes), default=base_width)
+    shape_need = (
+        max((_shape_size(node.shape)[0] for node in diagram.nodes), default=144.0)
+        + 42.0
+    )
+    title_need = max(
+        (_estimate_text_width(lane.title, 14) + 32.0 for lane in diagram.lanes),
+        default=base_width,
+    )
     boundary_pressure = _compute_boundary_pressure(diagram, lane_index_by_id)
     pressure_need = 200.0 + min(140.0, boundary_pressure * 8.0)
     return max(base_width, shape_need, title_need, pressure_need)
@@ -342,7 +350,9 @@ def _resolve_layout_tuning(
                     incident_step=incident_step,
                     cross_y_step=cross_y_step,
                 )
-                dense_pairs = _count_close_parallel_segments(connection_paths, min_line_gap=min_line_gap)
+                dense_pairs = _count_close_parallel_segments(
+                    connection_paths, min_line_gap=min_line_gap
+                )
 
                 if dense_pairs < best_dense_pairs:
                     best_dense_pairs = dense_pairs
@@ -405,9 +415,15 @@ def _build_connection_paths(
         target = boxes[connection.target]
         connection_paths.append(_route_connection(source, target, route_hints[index]))
 
-    connection_paths = _separate_overlapping_vertical_channels(connection_paths, min_line_gap=min_line_gap)
-    connection_paths = _separate_overlapping_horizontal_channels(connection_paths, min_line_gap=min_line_gap)
-    connection_paths = _separate_overlapping_vertical_channels(connection_paths, min_line_gap=min_line_gap)
+    connection_paths = _separate_overlapping_vertical_channels(
+        connection_paths, min_line_gap=min_line_gap
+    )
+    connection_paths = _separate_overlapping_horizontal_channels(
+        connection_paths, min_line_gap=min_line_gap
+    )
+    connection_paths = _separate_overlapping_vertical_channels(
+        connection_paths, min_line_gap=min_line_gap
+    )
     return connection_paths
 
 
@@ -416,7 +432,9 @@ def _count_close_parallel_segments(
     *,
     min_line_gap: float | None = None,
 ) -> int:
-    effective_gap = min_line_gap if min_line_gap is not None else get_global_min_line_gap()
+    effective_gap = (
+        min_line_gap if min_line_gap is not None else get_global_min_line_gap()
+    )
     segments: list[_Segment] = []
     for line_index, path_points in enumerate(connection_paths):
         segments.extend(_build_segments(path_points, line_index))
@@ -460,7 +478,9 @@ def _estimate_text_width(text: str, font_size: float) -> float:
     return width
 
 
-def _compute_boundary_pressure(diagram: Diagram, lane_index_by_id: dict[str, int]) -> int:
+def _compute_boundary_pressure(
+    diagram: Diagram, lane_index_by_id: dict[str, int]
+) -> int:
     if len(diagram.lanes) <= 1:
         return 0
 
@@ -494,7 +514,9 @@ def _build_route_hints(
         incident_by_node[connection.source].append((index, "source"))
         incident_by_node[connection.target].append((index, "target"))
 
-    start_offsets, end_offsets = _distribute_incident_offsets(incident_by_node, incident_step)
+    start_offsets, end_offsets = _distribute_incident_offsets(
+        incident_by_node, incident_step
+    )
 
     node_lane = {node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes}
     cross_lane_counter: dict[tuple[int, int], int] = defaultdict(int)
@@ -530,7 +552,9 @@ def _distribute_incident_offsets(
     start_offsets: dict[int, float] = {}
     end_offsets: dict[int, float] = {}
     for entries in incident_by_node.values():
-        ordered_entries = sorted(entries, key=lambda item: (item[0], 0 if item[1] == "source" else 1))
+        ordered_entries = sorted(
+            entries, key=lambda item: (item[0], 0 if item[1] == "source" else 1)
+        )
         offsets = _centered_offsets(len(ordered_entries), incident_step)
         for (connection_index, role), offset in zip(ordered_entries, offsets):
             if role == "source":
@@ -593,7 +617,9 @@ def _route_connection(
         return [start, (channel_x, start[1]), (channel_x, end[1]), end]
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
-    cross_y_offset = _clamp_node_offset(min(source.height, target.height), hint.cross_y_offset)
+    cross_y_offset = _clamp_node_offset(
+        min(source.height, target.height), hint.cross_y_offset
+    )
     start = (
         source.x + direction * source.width / 2,
         source.y + source_offset + cross_y_offset,
@@ -603,7 +629,11 @@ def _route_connection(
         target.y + target_offset + cross_y_offset,
     )
 
-    mid_x = (start[0] + end[0]) / 2 + direction * 8.0 + _stagger_value(hint.cross_slot, step=14.0)
+    mid_x = (
+        (start[0] + end[0]) / 2
+        + direction * 8.0
+        + _stagger_value(hint.cross_slot, step=14.0)
+    )
     if direction > 0:
         mid_x = min(max(mid_x, start[0] + 16.0), end[0] - 16.0)
     else:
@@ -622,7 +652,9 @@ def _separate_overlapping_vertical_channels(
     *,
     min_line_gap: float,
 ) -> list[list[tuple[float, float]]]:
-    adjusted_paths: list[list[tuple[float, float]]] = [list(path) for path in connection_paths]
+    adjusted_paths: list[list[tuple[float, float]]] = [
+        list(path) for path in connection_paths
+    ]
     occupied_channels: list[tuple[float, float, float]] = []
 
     for index, path in enumerate(adjusted_paths):
@@ -635,9 +667,13 @@ def _separate_overlapping_vertical_channels(
             occupied_channels.append(_extract_vertical_channel(candidate))
             continue
 
-        while _path_channel_overlaps(candidate, occupied_channels, min_line_gap=min_line_gap):
+        while _path_channel_overlaps(
+            candidate, occupied_channels, min_line_gap=min_line_gap
+        ):
             attempt += 1
-            candidate = _shift_path_middle_channel(base_path, _stagger_value(attempt, min_line_gap))
+            candidate = _shift_path_middle_channel(
+                base_path, _stagger_value(attempt, min_line_gap)
+            )
             if attempt > 10:
                 break
 
@@ -652,7 +688,9 @@ def _separate_overlapping_horizontal_channels(
     *,
     min_line_gap: float,
 ) -> list[list[tuple[float, float]]]:
-    adjusted_paths: list[list[tuple[float, float]]] = [list(path) for path in connection_paths]
+    adjusted_paths: list[list[tuple[float, float]]] = [
+        list(path) for path in connection_paths
+    ]
     occupied_channels: list[tuple[float, float, float]] = []
 
     for index, path in enumerate(adjusted_paths):
@@ -665,7 +703,9 @@ def _separate_overlapping_horizontal_channels(
             occupied_channels.extend(_extract_horizontal_channels(candidate))
             continue
 
-        while _path_horizontal_overlaps(candidate, occupied_channels, min_line_gap=min_line_gap):
+        while _path_horizontal_overlaps(
+            candidate, occupied_channels, min_line_gap=min_line_gap
+        ):
             attempt += 1
             shift = _stagger_value(attempt, max(1.0, min_line_gap * 0.6))
             max_shift = min_line_gap
@@ -723,7 +763,9 @@ def _is_shiftable_horizontal_path(path: list[tuple[float, float]]) -> bool:
     return abs(path[0][0] - path[-1][0]) >= 1.0
 
 
-def _extract_horizontal_channels(path: list[tuple[float, float]]) -> list[tuple[float, float, float]]:
+def _extract_horizontal_channels(
+    path: list[tuple[float, float]],
+) -> list[tuple[float, float, float]]:
     channels: list[tuple[float, float, float]] = []
     for index in range(len(path) - 1):
         x1, y1 = path[index]
@@ -733,7 +775,9 @@ def _extract_horizontal_channels(path: list[tuple[float, float]]) -> list[tuple[
     return channels
 
 
-def _extract_vertical_channel(path: list[tuple[float, float]]) -> tuple[float, float, float]:
+def _extract_vertical_channel(
+    path: list[tuple[float, float]],
+) -> tuple[float, float, float]:
     if len(path) < 4:
         x1, y1 = path[0]
         x2, y2 = path[-1]
@@ -745,7 +789,9 @@ def _extract_vertical_channel(path: list[tuple[float, float]]) -> tuple[float, f
     return x, min(y1, y2), max(y1, y2)
 
 
-def _shift_path_middle_channel(path: list[tuple[float, float]], delta_x: float) -> list[tuple[float, float]]:
+def _shift_path_middle_channel(
+    path: list[tuple[float, float]], delta_x: float
+) -> list[tuple[float, float]]:
     if len(path) < 4:
         return list(path)
 
@@ -757,7 +803,9 @@ def _shift_path_middle_channel(path: list[tuple[float, float]], delta_x: float) 
     return shifted
 
 
-def _shift_path_vertically(path: list[tuple[float, float]], delta_y: float) -> list[tuple[float, float]]:
+def _shift_path_vertically(
+    path: list[tuple[float, float]], delta_y: float
+) -> list[tuple[float, float]]:
     return [(x, y + delta_y) for x, y in path]
 
 
@@ -767,9 +815,12 @@ def _range_overlap(a1: float, a2: float, b1: float, b2: float) -> float:
     return max(0.0, high - low)
 
 
-def _compute_line_jumps(connection_paths: list[list[tuple[float, float]]]) -> list[LineJump]:
+def _compute_line_jumps(
+    connection_paths: list[list[tuple[float, float]]],
+) -> list[LineJump]:
     segments_by_line: list[list[_Segment]] = [
-        _build_segments(path_points, line_index) for line_index, path_points in enumerate(connection_paths)
+        _build_segments(path_points, line_index)
+        for line_index, path_points in enumerate(connection_paths)
     ]
 
     raw_jumps: list[LineJump] = []
@@ -828,7 +879,9 @@ def _dedupe_jumps(jumps: list[LineJump]) -> list[LineJump]:
     return unique
 
 
-def _build_segments(path_points: list[tuple[float, float]], line_index: int) -> list[_Segment]:
+def _build_segments(
+    path_points: list[tuple[float, float]], line_index: int
+) -> list[_Segment]:
     segments: list[_Segment] = []
     for segment_index in range(len(path_points) - 1):
         x1, y1 = path_points[segment_index]
@@ -855,7 +908,9 @@ def _build_segments(path_points: list[tuple[float, float]], line_index: int) -> 
     return segments
 
 
-def _orthogonal_intersection(segment_a: _Segment, segment_b: _Segment) -> tuple[float, float] | None:
+def _orthogonal_intersection(
+    segment_a: _Segment, segment_b: _Segment
+) -> tuple[float, float] | None:
     if segment_a.orientation == segment_b.orientation:
         return None
 
@@ -899,7 +954,9 @@ def _draw_jump_svg(jump: LineJump) -> list[str]:
     return fragments
 
 
-def _draw_connection_label_svg(path_points: list[tuple[float, float]], label_text: str) -> list[str]:
+def _draw_connection_label_svg(
+    path_points: list[tuple[float, float]], label_text: str
+) -> list[str]:
     label_x, label_y, orientation = _label_anchor(path_points)
 
     if orientation == "vertical":
@@ -975,7 +1032,9 @@ def _compute_base_levels(
 
     for node_id in topological_order:
         for next_node_id in outgoing[node_id]:
-            base_level[next_node_id] = max(base_level[next_node_id], base_level[node_id] + 1)
+            base_level[next_node_id] = max(
+                base_level[next_node_id], base_level[node_id] + 1
+            )
     return base_level
 
 
@@ -992,7 +1051,9 @@ def _compute_feedback_aware_levels(
     for node in nodes_by_order:
         for predecessor in incoming[node.id]:
             if order_lookup[predecessor] < node.order:
-                base_level[node.id] = max(base_level[node.id], base_level[predecessor] + 1)
+                base_level[node.id] = max(
+                    base_level[node.id], base_level[predecessor] + 1
+                )
 
     return base_level
 
@@ -1006,7 +1067,9 @@ def _place_nodes(
     occupied_slots: set[tuple[int, int]] = set()
     slot_by_node: dict[str, int] = {}
 
-    for node in sorted(diagram.nodes, key=lambda item: (base_level[item.id], item.order)):
+    for node in sorted(
+        diagram.nodes, key=lambda item: (base_level[item.id], item.order)
+    ):
         lane_index = lane_index_by_id[node.lane_id]
         slot = base_level[node.id]
         for predecessor in incoming[node.id]:
@@ -1027,7 +1090,10 @@ def _topological_order(
 ) -> list[str] | None:
     indegree = {node.id: len(incoming[node.id]) for node in nodes}
     order_lookup = {node.id: node.order for node in nodes}
-    ready = sorted((node.id for node in nodes if indegree[node.id] == 0), key=lambda node_id: order_lookup[node_id])
+    ready = sorted(
+        (node.id for node in nodes if indegree[node.id] == 0),
+        key=lambda node_id: order_lookup[node_id],
+    )
     result: list[str] = []
 
     while ready:
@@ -1054,7 +1120,9 @@ def _label_anchor(path_points: list[tuple[float, float]]) -> tuple[float, float,
 
     x = (start[0] + end[0]) / 2
     y = (start[1] + end[1]) / 2
-    orientation = "vertical" if abs(end[0] - start[0]) < abs(end[1] - start[1]) else "horizontal"
+    orientation = (
+        "vertical" if abs(end[0] - start[0]) < abs(end[1] - start[1]) else "horizontal"
+    )
     if orientation == "horizontal":
         y -= 4.0
     return x, y, orientation

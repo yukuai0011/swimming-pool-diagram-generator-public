@@ -8,13 +8,12 @@ from swimlane_diagram_generator.renderer_svg import (
     _compute_lane_width,
     _compute_line_jumps,
     _count_close_parallel_segments,
-    get_global_min_line_gap,
     _label_anchor,
     _resolve_layout_tuning,
-    set_global_min_line_gap,
+    get_global_min_line_gap,
     render_svg,
+    set_global_min_line_gap,
 )
-
 
 RENDER_DSL = """swimlaneDiagram
 title Render Test
@@ -104,12 +103,12 @@ class SvgRendererTests(unittest.TestCase):
 
         self.assertIn("<svg", svg)
         self.assertIn("arrowhead", svg)
-        self.assertIn("marker-end=\"url(#arrowhead)\"", svg)
+        self.assertIn('marker-end="url(#arrowhead)"', svg)
         self.assertIn("Render Test", svg)
         self.assertIn("Lane A", svg)
         self.assertIn("payload", svg)
         self.assertIn("<polygon", svg)  # decision/data shapes
-        self.assertIn("<path", svg)     # document shape
+        self.assertIn("<path", svg)  # document shape
         self.assertIn("rotate(-90", svg)
 
     def test_compact_layout_reuses_vertical_rows(self) -> None:
@@ -132,7 +131,9 @@ class SvgRendererTests(unittest.TestCase):
         ]
         jumps = _compute_line_jumps(paths)
 
-        self.assertTrue(any(abs(jump.x - 60.0) < 0.1 and abs(jump.y - 40.0) < 0.1 for jump in jumps))
+        self.assertTrue(
+            any(abs(jump.x - 60.0) < 0.1 and abs(jump.y - 40.0) < 0.1 for jump in jumps)
+        )
 
     def test_lane_width_expands_under_pressure(self) -> None:
         diagram = parse_diagram(PRESSURE_DSL)

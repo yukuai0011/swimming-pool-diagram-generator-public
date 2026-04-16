@@ -3,7 +3,6 @@ import unittest
 from swimlane_diagram_generator.model import Shape
 from swimlane_diagram_generator.parser import DiagramSyntaxError, parse_diagram
 
-
 VALID_DSL = """swimlaneDiagram
 title Demo Flow
 

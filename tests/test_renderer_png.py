@@ -3,7 +3,6 @@ import unittest
 from swimlane_diagram_generator.parser import parse_diagram
 from swimlane_diagram_generator.renderer_png import render_png_bytes
 
-
 PNG_DSL = """swimlaneDiagram
 title PNG Render Test
 

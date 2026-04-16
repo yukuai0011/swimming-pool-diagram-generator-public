@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from .parser import DiagramSyntaxError, parse_diagram
 from .renderer_png import render_png_bytes
@@ -147,7 +147,9 @@ def _resolve_output_format(output_arg: str | None, format_arg: str | None) -> st
     return "svg"
 
 
-def _resolve_output_path(input_arg: str, output_arg: str | None, output_format: str) -> Path:
+def _resolve_output_path(
+    input_arg: str, output_arg: str | None, output_format: str
+) -> Path:
     if output_arg:
         return Path(output_arg)
     if input_arg == "-":
