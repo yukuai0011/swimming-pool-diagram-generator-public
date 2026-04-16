@@ -48,6 +48,22 @@ class _Segment:
     orientation: str
 
 
+@dataclass(slots=True)
+class RenderGlobalConfig:
+    min_line_gap: float = 12.0
+
+
+GLOBAL_RENDER_CONFIG = RenderGlobalConfig()
+
+
+def set_global_min_line_gap(min_line_gap: float) -> None:
+    GLOBAL_RENDER_CONFIG.min_line_gap = max(4.0, float(min_line_gap))
+
+
+def get_global_min_line_gap() -> float:
+    return GLOBAL_RENDER_CONFIG.min_line_gap
+
+
 def render_svg(diagram: Diagram) -> str:
     if not diagram.lanes:
         raise ValueError("Cannot render diagram without lanes.")
@@ -98,7 +114,6 @@ def render_svg(diagram: Diagram) -> str:
         diagram,
         boxes,
         lane_index_by_id,
-        lane_width,
         incident_step=incident_step,
         cross_y_step=cross_y_step,
     )
@@ -290,46 +305,51 @@ def _resolve_layout_tuning(
     first_row_offset: float,
     row_gap: float,
 ) -> tuple[float, float, float]:
-    lane_width = initial_lane_width
-    incident_step = 10.0
-    cross_y_step = 6.0
-    target_dense_pairs = max(1, len(diagram.connections) // 6)
-    best_result = (lane_width, incident_step, cross_y_step)
+    min_line_gap = get_global_min_line_gap()
+    base_incident_step = max(10.0, min_line_gap)
+    base_cross_y_step = max(5.0, min_line_gap * 0.75)
+    target_dense_pairs = 0
+    best_result = (initial_lane_width, base_incident_step, base_cross_y_step)
     best_dense_pairs = float("inf")
 
-    for attempt in range(6):
-        boxes = _build_boxes(
-            diagram,
-            lane_index_by_id,
-            slot_by_node,
-            lane_width,
-            chart_x=18.0,
-            lane_body_y=lane_body_y,
-            first_row_offset=first_row_offset,
-            row_gap=row_gap,
-        )
-        connection_paths = _build_connection_paths(
-            diagram,
-            boxes,
-            lane_index_by_id,
-            lane_width,
-            incident_step=incident_step,
-            cross_y_step=cross_y_step,
-        )
-        dense_pairs = _count_close_parallel_segments(connection_paths)
+    width_candidates = [
+        initial_lane_width,
+        initial_lane_width + max(12.0, min_line_gap * 0.8),
+        initial_lane_width + max(24.0, min_line_gap * 1.6),
+    ]
+    incident_factors = [1.0, 1.2, 1.4, 1.6, 1.8]
+    cross_factors = [1.0, 1.2, 1.4]
 
-        if dense_pairs < best_dense_pairs:
-            best_dense_pairs = dense_pairs
-            best_result = (lane_width, incident_step, cross_y_step)
+    for lane_width in width_candidates:
+        for incident_factor in incident_factors:
+            incident_step = base_incident_step * incident_factor
+            for cross_factor in cross_factors:
+                cross_y_step = base_cross_y_step * cross_factor
+                boxes = _build_boxes(
+                    diagram,
+                    lane_index_by_id,
+                    slot_by_node,
+                    lane_width,
+                    chart_x=18.0,
+                    lane_body_y=lane_body_y,
+                    first_row_offset=first_row_offset,
+                    row_gap=row_gap,
+                )
+                connection_paths = _build_connection_paths(
+                    diagram,
+                    boxes,
+                    lane_index_by_id,
+                    incident_step=incident_step,
+                    cross_y_step=cross_y_step,
+                )
+                dense_pairs = _count_close_parallel_segments(connection_paths, min_line_gap=min_line_gap)
 
-        if dense_pairs <= target_dense_pairs:
-            return lane_width, incident_step, cross_y_step
+                if dense_pairs < best_dense_pairs:
+                    best_dense_pairs = dense_pairs
+                    best_result = (lane_width, incident_step, cross_y_step)
 
-        if attempt % 2 == 0:
-            incident_step += 2.0
-            cross_y_step += 1.5
-        else:
-            lane_width += 16.0
+                if dense_pairs <= target_dense_pairs:
+                    return lane_width, incident_step, cross_y_step
 
     return best_result
 
@@ -368,11 +388,11 @@ def _build_connection_paths(
     diagram: Diagram,
     boxes: dict[str, NodeBox],
     lane_index_by_id: dict[str, int],
-    lane_width: float,
     *,
     incident_step: float = 10.0,
     cross_y_step: float = 6.0,
 ) -> list[list[tuple[float, float]]]:
+    min_line_gap = get_global_min_line_gap()
     route_hints = _build_route_hints(
         diagram,
         lane_index_by_id,
@@ -383,11 +403,20 @@ def _build_connection_paths(
     for index, connection in enumerate(diagram.connections):
         source = boxes[connection.source]
         target = boxes[connection.target]
-        connection_paths.append(_route_connection(source, target, route_hints[index], lane_width))
-    return _separate_overlapping_vertical_channels(connection_paths)
+        connection_paths.append(_route_connection(source, target, route_hints[index]))
+
+    connection_paths = _separate_overlapping_vertical_channels(connection_paths, min_line_gap=min_line_gap)
+    connection_paths = _separate_overlapping_horizontal_channels(connection_paths, min_line_gap=min_line_gap)
+    connection_paths = _separate_overlapping_vertical_channels(connection_paths, min_line_gap=min_line_gap)
+    return connection_paths
 
 
-def _count_close_parallel_segments(connection_paths: list[list[tuple[float, float]]]) -> int:
+def _count_close_parallel_segments(
+    connection_paths: list[list[tuple[float, float]]],
+    *,
+    min_line_gap: float | None = None,
+) -> int:
+    effective_gap = min_line_gap if min_line_gap is not None else get_global_min_line_gap()
     segments: list[_Segment] = []
     for line_index, path_points in enumerate(connection_paths):
         segments.extend(_build_segments(path_points, line_index))
@@ -397,25 +426,30 @@ def _count_close_parallel_segments(connection_paths: list[list[tuple[float, floa
         for second in segments[index + 1 :]:
             if first.line_index == second.line_index:
                 continue
-            if _are_segments_close_parallel(first, second):
+            if _are_segments_close_parallel(first, second, min_line_gap=effective_gap):
                 dense_pairs += 1
     return dense_pairs
 
 
-def _are_segments_close_parallel(first: _Segment, second: _Segment) -> bool:
+def _are_segments_close_parallel(
+    first: _Segment,
+    second: _Segment,
+    *,
+    min_line_gap: float,
+) -> bool:
     if first.orientation != second.orientation:
         return False
 
     if first.orientation == "horizontal":
-        if abs(first.y1 - second.y1) > 11.0:
+        if abs(first.y1 - second.y1) >= min_line_gap:
             return False
         overlap = _range_overlap(first.x1, first.x2, second.x1, second.x2)
-        return overlap >= 18.0
+        return overlap >= min_line_gap
 
-    if abs(first.x1 - second.x1) > 11.0:
+    if abs(first.x1 - second.x1) >= min_line_gap:
         return False
     overlap = _range_overlap(first.y1, first.y2, second.y1, second.y2)
-    return overlap >= 18.0
+    return overlap >= min_line_gap
 
 
 def _estimate_text_width(text: str, font_size: float) -> float:
@@ -463,7 +497,6 @@ def _build_route_hints(
     start_offsets, end_offsets = _distribute_incident_offsets(incident_by_node, incident_step)
 
     node_lane = {node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes}
-    same_lane_counter: dict[int, int] = defaultdict(int)
     cross_lane_counter: dict[tuple[int, int], int] = defaultdict(int)
 
     hints: list[RouteHint] = []
@@ -473,7 +506,6 @@ def _build_route_hints(
         same_slot, cross_slot, cross_y_offset = _next_route_slots(
             source_lane,
             target_lane,
-            same_lane_counter,
             cross_lane_counter,
             cross_y_step,
         )
@@ -511,14 +543,12 @@ def _distribute_incident_offsets(
 def _next_route_slots(
     source_lane: int,
     target_lane: int,
-    same_lane_counter: dict[int, int],
     cross_lane_counter: dict[tuple[int, int], int],
     cross_y_step: float,
 ) -> tuple[int, int, float]:
     if source_lane == target_lane:
-        same_slot = same_lane_counter[source_lane]
-        same_lane_counter[source_lane] += 1
-        return same_slot, 0, 0.0
+        # Same-lane links default to a straight vertical channel.
+        return 0, 0, 0.0
 
     route_key = (source_lane, target_lane)
     cross_slot = cross_lane_counter[route_key]
@@ -546,25 +576,21 @@ def _route_connection(
     source: NodeBox,
     target: NodeBox,
     hint: RouteHint,
-    lane_width: float,
 ) -> list[tuple[float, float]]:
     source_offset = _clamp_node_offset(source.height, hint.start_offset)
     target_offset = _clamp_node_offset(target.height, hint.end_offset)
 
     if source.lane_index == target.lane_index:
         is_downward = target.y >= source.y
+        channel_x = (source.x + target.x) / 2
         if is_downward:
-            start = (source.x + source_offset, source.y + source.height / 2)
-            end = (target.x + target_offset, target.y - target.height / 2)
+            start = (source.x, source.y + source.height / 2)
+            end = (target.x, target.y - target.height / 2)
         else:
-            start = (source.x + source_offset, source.y - source.height / 2)
-            end = (target.x + target_offset, target.y + target.height / 2)
+            start = (source.x, source.y - source.height / 2)
+            end = (target.x, target.y + target.height / 2)
 
-        detour = _stagger_value(hint.same_slot + 1, step=14.0)
-        max_detour = max(12.0, lane_width / 2 - max(source.width, target.width) / 2 - 14.0)
-        detour = max(-max_detour, min(max_detour, detour))
-        detour_x = (source.x + target.x) / 2 + detour
-        return [start, (detour_x, start[1]), (detour_x, end[1]), end]
+        return [start, (channel_x, start[1]), (channel_x, end[1]), end]
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
     cross_y_offset = _clamp_node_offset(min(source.height, target.height), hint.cross_y_offset)
@@ -593,6 +619,8 @@ def _clamp_node_offset(node_height: float, offset: float) -> float:
 
 def _separate_overlapping_vertical_channels(
     connection_paths: list[list[tuple[float, float]]],
+    *,
+    min_line_gap: float,
 ) -> list[list[tuple[float, float]]]:
     adjusted_paths: list[list[tuple[float, float]]] = [list(path) for path in connection_paths]
     occupied_channels: list[tuple[float, float, float]] = []
@@ -602,9 +630,14 @@ def _separate_overlapping_vertical_channels(
         attempt = 0
         candidate = base_path
 
-        while _path_channel_overlaps(candidate, occupied_channels):
+        if not _is_shiftable_vertical_path(candidate):
+            adjusted_paths[index] = candidate
+            occupied_channels.append(_extract_vertical_channel(candidate))
+            continue
+
+        while _path_channel_overlaps(candidate, occupied_channels, min_line_gap=min_line_gap):
             attempt += 1
-            candidate = _shift_path_middle_channel(base_path, _stagger_value(attempt, 8.0))
+            candidate = _shift_path_middle_channel(base_path, _stagger_value(attempt, min_line_gap))
             if attempt > 10:
                 break
 
@@ -614,29 +647,118 @@ def _separate_overlapping_vertical_channels(
     return adjusted_paths
 
 
-def _path_channel_overlaps(path: list[tuple[float, float]], occupied_channels: list[tuple[float, float, float]]) -> bool:
+def _separate_overlapping_horizontal_channels(
+    connection_paths: list[list[tuple[float, float]]],
+    *,
+    min_line_gap: float,
+) -> list[list[tuple[float, float]]]:
+    adjusted_paths: list[list[tuple[float, float]]] = [list(path) for path in connection_paths]
+    occupied_channels: list[tuple[float, float, float]] = []
+
+    for index, path in enumerate(adjusted_paths):
+        base_path = list(path)
+        attempt = 0
+        candidate = base_path
+
+        if not _is_shiftable_horizontal_path(candidate):
+            adjusted_paths[index] = candidate
+            occupied_channels.extend(_extract_horizontal_channels(candidate))
+            continue
+
+        while _path_horizontal_overlaps(candidate, occupied_channels, min_line_gap=min_line_gap):
+            attempt += 1
+            shift = _stagger_value(attempt, max(1.0, min_line_gap * 0.6))
+            max_shift = min_line_gap
+            shift = max(-max_shift, min(max_shift, shift))
+            candidate = _shift_path_vertically(base_path, shift)
+            if attempt > 10:
+                break
+
+        adjusted_paths[index] = candidate
+        occupied_channels.extend(_extract_horizontal_channels(candidate))
+
+    return adjusted_paths
+
+
+def _path_channel_overlaps(
+    path: list[tuple[float, float]],
+    occupied_channels: list[tuple[float, float, float]],
+    *,
+    min_line_gap: float,
+) -> bool:
     x, y1, y2 = _extract_vertical_channel(path)
     for occupied_x, occupied_y1, occupied_y2 in occupied_channels:
-        if abs(x - occupied_x) >= 1.0:
+        if abs(x - occupied_x) >= min_line_gap:
             continue
-        if _range_overlap(y1, y2, occupied_y1, occupied_y2) >= 8.0:
+        if _range_overlap(y1, y2, occupied_y1, occupied_y2) >= min_line_gap:
             return True
     return False
 
 
+def _path_horizontal_overlaps(
+    path: list[tuple[float, float]],
+    occupied_channels: list[tuple[float, float, float]],
+    *,
+    min_line_gap: float,
+) -> bool:
+    channels = _extract_horizontal_channels(path)
+    for y, x1, x2 in channels:
+        for occupied_y, occupied_x1, occupied_x2 in occupied_channels:
+            if abs(y - occupied_y) >= min_line_gap:
+                continue
+            if _range_overlap(x1, x2, occupied_x1, occupied_x2) >= min_line_gap:
+                return True
+    return False
+
+
+def _is_shiftable_vertical_path(path: list[tuple[float, float]]) -> bool:
+    if len(path) < 4:
+        return False
+    return abs(path[0][0] - path[-1][0]) >= 1.0
+
+
+def _is_shiftable_horizontal_path(path: list[tuple[float, float]]) -> bool:
+    if len(path) < 4:
+        return False
+    return abs(path[0][0] - path[-1][0]) >= 1.0
+
+
+def _extract_horizontal_channels(path: list[tuple[float, float]]) -> list[tuple[float, float, float]]:
+    channels: list[tuple[float, float, float]] = []
+    for index in range(len(path) - 1):
+        x1, y1 = path[index]
+        x2, y2 = path[index + 1]
+        if abs(y1 - y2) < 1e-6 and abs(x1 - x2) >= 1e-6:
+            channels.append((y1, min(x1, x2), max(x1, x2)))
+    return channels
+
+
 def _extract_vertical_channel(path: list[tuple[float, float]]) -> tuple[float, float, float]:
+    if len(path) < 4:
+        x1, y1 = path[0]
+        x2, y2 = path[-1]
+        x = (x1 + x2) / 2
+        return x, min(y1, y2), max(y1, y2)
+
     x, y1 = path[1]
     _, y2 = path[2]
     return x, min(y1, y2), max(y1, y2)
 
 
 def _shift_path_middle_channel(path: list[tuple[float, float]], delta_x: float) -> list[tuple[float, float]]:
+    if len(path) < 4:
+        return list(path)
+
     shifted = list(path)
     x1, y1 = shifted[1]
     x2, y2 = shifted[2]
     shifted[1] = (x1 + delta_x, y1)
     shifted[2] = (x2 + delta_x, y2)
     return shifted
+
+
+def _shift_path_vertically(path: list[tuple[float, float]], delta_y: float) -> list[tuple[float, float]]:
+    return [(x, y + delta_y) for x, y in path]
 
 
 def _range_overlap(a1: float, a2: float, b1: float, b2: float) -> float:

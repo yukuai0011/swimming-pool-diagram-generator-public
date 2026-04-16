@@ -3,9 +3,15 @@ import unittest
 from swimlane_diagram_generator.parser import parse_diagram
 from swimlane_diagram_generator.renderer_svg import (
     _assign_vertical_slots,
+    _build_boxes,
+    _build_connection_paths,
     _compute_lane_width,
     _compute_line_jumps,
+    _count_close_parallel_segments,
+    get_global_min_line_gap,
     _label_anchor,
+    _resolve_layout_tuning,
+    set_global_min_line_gap,
     render_svg,
 )
 
@@ -74,6 +80,22 @@ connect c1 --> a1
 connect c2 --> a2
 """
 
+STRAIGHT_DSL = """swimlaneDiagram
+title Straight Link
+
+lane partner "合作服务商"
+lane aftersales "售后部"
+
+node start in partner [start/end] "开始"
+node receive in partner process "接收退机并登记"
+node triage in aftersales decision "资料是否完整"
+node reject in partner process "驳回并补充资料"
+
+connect start --> receive
+connect receive --> triage
+connect triage --> reject
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -127,6 +149,99 @@ class SvgRendererTests(unittest.TestCase):
 
         self.assertEqual(vertical_orientation, "vertical")
         self.assertEqual(horizontal_orientation, "horizontal")
+
+    def test_same_lane_downward_link_is_straight(self) -> None:
+        diagram = parse_diagram(STRAIGHT_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+
+        base_lane_width = _compute_lane_width(diagram, lane_index_by_id)
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            base_lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        first_path_x = {round(point[0], 2) for point in paths[0]}
+        self.assertEqual(len(first_path_x), 1)
+
+    def test_global_min_line_gap_influences_tuning(self) -> None:
+        original_gap = get_global_min_line_gap()
+        try:
+            diagram = parse_diagram(PRESSURE_DSL)
+            lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+            slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+            base_lane_width = _compute_lane_width(diagram, lane_index_by_id)
+            lane_body_y = 18.0 + 48.0 + 40.0
+
+            set_global_min_line_gap(8.0)
+            _, incident_low, cross_low = _resolve_layout_tuning(
+                diagram,
+                lane_index_by_id,
+                slot_by_node,
+                base_lane_width,
+                lane_body_y,
+                54.0,
+                104.0,
+            )
+
+            set_global_min_line_gap(16.0)
+            lane_width_high, incident_high, cross_high = _resolve_layout_tuning(
+                diagram,
+                lane_index_by_id,
+                slot_by_node,
+                base_lane_width,
+                lane_body_y,
+                54.0,
+                104.0,
+            )
+
+            boxes_high = _build_boxes(
+                diagram,
+                lane_index_by_id,
+                slot_by_node,
+                lane_width_high,
+                18.0,
+                lane_body_y,
+                54.0,
+                104.0,
+            )
+            paths_high = _build_connection_paths(
+                diagram,
+                boxes_high,
+                lane_index_by_id,
+                incident_step=incident_high,
+                cross_y_step=cross_high,
+            )
+
+            self.assertGreaterEqual(incident_high, incident_low)
+            self.assertGreaterEqual(cross_high, cross_low)
+            self.assertGreaterEqual(lane_width_high, base_lane_width)
+            self.assertGreaterEqual(_count_close_parallel_segments(paths_high), 0)
+        finally:
+            set_global_min_line_gap(original_gap)
 
 
 if __name__ == "__main__":

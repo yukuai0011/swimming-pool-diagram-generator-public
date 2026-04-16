@@ -19,6 +19,7 @@ Current scope (v0.1):
 - Crossing-line jump bumps (Visio-style bridge effect)
 - Adaptive lane width under high connection density to reduce full line overlap
 - Iterative readability pass: expands lane width further if connector channels are still visually dense
+- Global connector spacing setting (`min_line_gap`) for both horizontal and vertical channels
 - Flow order: **lanes → nodes → connections**
 
 ## Quick start (with uv)
@@ -42,6 +43,10 @@ Current scope (v0.1):
 3.2 Or specify format explicitly:
 
   `uv run swimlane-gen examples/vertical_return_flow.swim -f png`
+
+3.3 Increase global minimum connector spacing (px):
+
+  `uv run swimlane-gen examples/complex_cross_lane_flow.swim --min-line-gap 16 -o output/complex_cross_lane_flow.svg`
 
 4. Render a more complex sample (cross-lane, loopback, and crossing-line scenarios):
 
@@ -92,6 +97,11 @@ connect move --> order : 同步销售流程
 - If `--format` is provided, it controls output (`svg` or `png`).
 - Otherwise, format is inferred from `--output` suffix.
 - Default is `svg`.
+
+### Global spacing setting
+
+- `--min-line-gap <number>` sets the global minimum distance (in pixels) between parallel connector channels.
+- This setting affects both horizontal and vertical line spacing for the entire render pass.
 
 ## Project structure
 

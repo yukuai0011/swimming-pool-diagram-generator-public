@@ -11,13 +11,11 @@ from .renderer_svg import (
     LineJump,
     NodeBox,
     _assign_vertical_slots,
-    _build_route_hints,
+    _build_connection_paths,
     _compute_lane_width,
     _compute_line_jumps,
     _label_anchor,
     _resolve_layout_tuning,
-    _route_connection,
-    _separate_overlapping_vertical_channels,
     _shape_size,
     _text_capacity,
     _wrap_text,
@@ -83,20 +81,13 @@ def render_png_bytes(diagram: Diagram) -> bytes:
             height=node_height,
         )
 
-    route_hints = _build_route_hints(
+    connection_paths = _build_connection_paths(
         diagram,
+        boxes,
         lane_index_by_id,
         incident_step=incident_step,
         cross_y_step=cross_y_step,
     )
-    connection_paths: list[list[tuple[float, float]]] = []
-    for index, connection in enumerate(diagram.connections):
-        source = boxes[connection.source]
-        target = boxes[connection.target]
-        path = _route_connection(source, target, route_hints[index], lane_width)
-        connection_paths.append(path)
-
-    connection_paths = _separate_overlapping_vertical_channels(connection_paths)
 
     jumps = _compute_line_jumps(connection_paths)
 

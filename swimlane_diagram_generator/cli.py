@@ -6,7 +6,7 @@ import sys
 
 from .parser import DiagramSyntaxError, parse_diagram
 from .renderer_png import render_png_bytes
-from .renderer_svg import render_svg
+from .renderer_svg import render_svg, set_global_min_line_gap
 
 EXAMPLE_DSL = """swimlaneDiagram
 title 售后退货处理（复杂示例：跨泳道与交叉线）
@@ -84,6 +84,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print an example DSL and exit.",
     )
+    parser.add_argument(
+        "--min-line-gap",
+        type=float,
+        default=None,
+        help="Global minimum distance (in px) between parallel connector lines.",
+    )
     return parser
 
 
@@ -99,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Provide an input DSL file path, or use --example.")
 
     try:
+        if args.min_line_gap is not None:
+            set_global_min_line_gap(args.min_line_gap)
+
         source_text = _read_input(args.input)
         diagram = parse_diagram(source_text)
         output_format = _resolve_output_format(args.output, args.format)
