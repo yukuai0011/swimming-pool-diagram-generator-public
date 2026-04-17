@@ -65,7 +65,7 @@ def parse_diagram(source: str) -> Diagram:
         line = raw_line.strip()
         if not line:
             continue
-        if line.startswith("%%") or line.startswith("#"):
+        if line.startswith(("%%", "#")):
             continue
 
         lowered = line.lower()

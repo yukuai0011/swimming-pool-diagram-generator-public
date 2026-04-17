@@ -23,3 +23,12 @@ no-cache = true
 prerelease = "if-necessary-or-explicit"
 preview = true
 upgrade = false
+
+[tool.ruff]
+preview = true
+
+[tool.ruff.lint]
+preview = true
+
+[tool.ruff.format]
+preview = true

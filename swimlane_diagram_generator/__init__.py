@@ -12,10 +12,10 @@ __all__ = [
     "Lane",
     "Node",
     "Shape",
+    "get_global_min_line_gap",
     "parse_diagram",
     "render_png",
     "render_png_bytes",
     "render_svg",
-    "get_global_min_line_gap",
     "set_global_min_line_gap",
 ]

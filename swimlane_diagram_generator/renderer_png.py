@@ -29,6 +29,7 @@ LINE_COLOR = "#111827"
 WHITE = "#ffffff"
 LANE_HEADER = "#f3f4f6"
 LANE_BODY = "#f8f8f8"
+FontLike = ImageFont.FreeTypeFont | ImageFont.ImageFont
 
 
 def render_png_bytes(diagram: Diagram) -> bytes:
@@ -231,7 +232,7 @@ def _draw_centered_text(
     center_x: float,
     center_y: float,
     text: str,
-    font: ImageFont.ImageFont,
+    font: FontLike,
     color: str,
 ) -> None:
     bbox = draw.textbbox((0, 0), text, font=font)
@@ -366,7 +367,7 @@ def _draw_vertical_label(
     center_x: float,
     center_y: float,
     label_text: str,
-    font: ImageFont.ImageFont,
+    font: FontLike,
 ) -> None:
     chars = list(label_text) if label_text else ["?"]
     char_sizes: list[tuple[float, float]] = []
@@ -464,7 +465,7 @@ def _draw_arrowhead(
 
 
 @lru_cache(maxsize=16)
-def _load_font(size: int) -> ImageFont.ImageFont:
+def _load_font(size: int) -> FontLike:
     candidates = [
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/segoeui.ttf",
