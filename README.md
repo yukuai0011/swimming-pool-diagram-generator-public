@@ -17,11 +17,14 @@ Current scope (v0.1):
 - Connection lines with optional label/explanation text
 - Orientation-aware labels (vertical labels on vertical connector segments)
 - Crossing-line jump bumps (Visio-style bridge effect)
+- Grid-based routing system (line spacing is the grid size)
 - Adaptive lane width under high connection density to reduce full line overlap
 - Iterative readability pass: expands lane width further if connector channels are still visually dense
-- Global connector spacing setting (`min_line_gap`) for both horizontal and vertical channels
+- No same-axis overlap rule: vertical/vertical or horizontal/horizontal overlaps are avoided
 - Automatic node size adjustment from connector pressure and text length
+- Node capacity growth (e.g., 4×3 node supports up to 10 connectors before expansion)
 - Automatic text wrapping/newline layout inside nodes when additional space is available
+- Shape-aware text boxes (e.g., `document` uses a smaller inner text region)
 - Flow order: **lanes → nodes → connections**
 
 ## Quick start (with uv)
@@ -102,9 +105,10 @@ connect move --> order : 同步销售流程
 
 ### Global spacing setting
 
-- `--min-line-gap <number>` sets the global minimum distance (in pixels) between parallel connector channels.
-- This setting affects both horizontal and vertical line spacing for the entire render pass.
-- The setting also influences minimum node side span when many connectors attach on one side.
+- `--min-line-gap <number>` sets the **grid size** (in pixels).
+- Connector routing snaps to grid lines (including half-grid anchors for text centering).
+- This setting affects horizontal/vertical routing spacing and node auto-sizing.
+- Increasing this value can significantly increase diagram height/size for dense flows.
 
 ## Project structure
 

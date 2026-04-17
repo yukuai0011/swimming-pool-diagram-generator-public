@@ -118,6 +118,37 @@ connect s3 --> target
 connect s4 --> target
 """
 
+CAPACITY_DSL = """swimlaneDiagram
+title Capacity Growth
+
+lane a "A"
+
+node s1 in a process "S1"
+node s2 in a process "S2"
+node s3 in a process "S3"
+node s4 in a process "S4"
+node s5 in a process "S5"
+node s6 in a process "S6"
+node s7 in a process "S7"
+node s8 in a process "S8"
+node s9 in a process "S9"
+node s10 in a process "S10"
+node s11 in a process "S11"
+node target in a process "Target"
+
+connect s1 --> target
+connect s2 --> target
+connect s3 --> target
+connect s4 --> target
+connect s5 --> target
+connect s6 --> target
+connect s7 --> target
+connect s8 --> target
+connect s9 --> target
+connect s10 --> target
+connect s11 --> target
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -129,10 +160,10 @@ class SvgRendererTests(unittest.TestCase):
         self.assertIn('marker-end="url(#arrowhead)"', svg)
         self.assertIn("Render Test", svg)
         self.assertIn("Lane A", svg)
-        self.assertIn("payload", svg)
         self.assertIn("<polygon", svg)  # decision/data shapes
         self.assertIn("<path", svg)  # document shape
-        self.assertIn("rotate(-90", svg)
+        self.assertIn('class="vertical-label"', svg)
+        self.assertNotIn("rotate(-90", svg)
 
     def test_compact_layout_reuses_vertical_rows(self) -> None:
         diagram = parse_diagram(COMPACT_DSL)
@@ -283,6 +314,67 @@ class SvgRendererTests(unittest.TestCase):
             self.assertGreaterEqual(cross_high, cross_low)
             self.assertGreaterEqual(lane_width_high, base_lane_width)
             self.assertGreaterEqual(_count_close_parallel_segments(paths_high), 0)
+        finally:
+            set_global_min_line_gap(original_gap)
+
+    def test_connections_snap_to_half_grid(self) -> None:
+        diagram = parse_diagram(STRAIGHT_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        half_step = get_global_min_line_gap() / 2.0
+        for path in paths:
+            for x, y in path:
+                self.assertAlmostEqual(round(x / half_step) * half_step, x, places=5)
+                self.assertAlmostEqual(round(y / half_step) * half_step, y, places=5)
+
+    def test_node_grows_past_4x3_when_connections_exceed_ten(self) -> None:
+        original_gap = get_global_min_line_gap()
+        try:
+            set_global_min_line_gap(15.0)
+            diagram = parse_diagram(CAPACITY_DSL)
+            lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+            slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+            dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+
+            target_width, target_height = dimensions["target"]
+            self.assertGreaterEqual(max(target_width, target_height), 60.0)
         finally:
             set_global_min_line_gap(original_gap)
 

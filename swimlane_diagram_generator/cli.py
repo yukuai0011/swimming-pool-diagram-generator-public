@@ -88,7 +88,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--min-line-gap",
         type=float,
         default=None,
-        help="Global minimum distance (in px) between parallel connector lines.",
+        help="Global grid size (in px) used for connector spacing and node auto-sizing.",
     )
     return parser
 

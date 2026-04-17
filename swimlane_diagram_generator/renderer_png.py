@@ -17,7 +17,9 @@ from .renderer_svg import (
     _compute_line_jumps,
     _compute_node_dimensions,
     _label_anchor,
+    _lane_borders_x,
     _resolve_layout_tuning,
+    _snap_to_grid,
     _text_capacity,
     _wrap_text,
     get_global_min_line_gap,
@@ -39,27 +41,32 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
     slot_by_node, slot_count = _assign_vertical_slots(diagram, lane_index_by_id)
     node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+    grid_size = get_global_min_line_gap()
 
-    chart_x = 18.0
-    chart_y = 18.0
+    chart_x = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
+    chart_y = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
     lane_width = _compute_lane_width(
         diagram,
         lane_index_by_id,
         node_dimensions=node_dimensions,
     )
-    title_height = 48.0 if diagram.title else 36.0
-    lane_header_height = 40.0
+    title_height = _snap_to_grid(48.0 if diagram.title else 36.0, half=True)
+    lane_header_height = _snap_to_grid(40.0, half=True)
 
-    first_row_offset = 54.0
+    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0), half=True)
     max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
     min_line_gap = get_global_min_line_gap()
-    row_gap = max(104.0, max_node_height + max(24.0, min_line_gap * 1.2))
+    row_gap = _snap_to_grid(
+        max(104.0, max_node_height + max(24.0, min_line_gap * 1.2)),
+        half=True,
+    )
     body_height = max(
         320.0,
         first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
     )
+    body_height = _snap_to_grid(body_height, half=True)
 
-    lane_body_y = chart_y + title_height + lane_header_height
+    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height, half=True)
     lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
         diagram,
         lane_index_by_id,
@@ -71,8 +78,8 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         node_dimensions=node_dimensions,
     )
 
-    chart_width = lane_count * lane_width
-    chart_height = title_height + lane_header_height + body_height
+    chart_width = _snap_to_grid(lane_count * lane_width)
+    chart_height = _snap_to_grid(title_height + lane_header_height + body_height, half=True)
     image_width = round(chart_x * 2 + chart_width)
     image_height = round(chart_y * 2 + chart_height)
 
@@ -87,6 +94,7 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         row_gap,
         node_dimensions=node_dimensions,
     )
+    lane_borders_x = _lane_borders_x(chart_x, lane_width, lane_count)
 
     connection_paths = _build_connection_paths(
         diagram,
@@ -94,6 +102,7 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         lane_index_by_id,
         incident_step=incident_step,
         cross_y_step=cross_y_step,
+        lane_borders_x=lane_borders_x,
     )
 
     jumps = _compute_line_jumps(connection_paths)
@@ -307,7 +316,11 @@ def _draw_node_png(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
 def _draw_node_text(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
     lines = _wrap_text(box.text, _text_capacity(box))
     line_height = 15.0
-    start_y = box.y - (len(lines) - 1) * line_height / 2
+    text_center_y = box.y
+    if box.shape is Shape.DOCUMENT:
+        text_center_y -= box.height * 0.12
+
+    start_y = text_center_y - (len(lines) - 1) * line_height / 2
     font = _load_font(13)
 
     for index, line in enumerate(lines):
