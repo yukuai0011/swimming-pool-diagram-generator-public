@@ -79,7 +79,9 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     )
 
     chart_width = _snap_to_grid(lane_count * lane_width)
-    chart_height = _snap_to_grid(title_height + lane_header_height + body_height, half=True)
+    chart_height = _snap_to_grid(
+        title_height + lane_header_height + body_height, half=True
+    )
     image_width = round(chart_x * 2 + chart_width)
     image_height = round(chart_y * 2 + chart_height)
 

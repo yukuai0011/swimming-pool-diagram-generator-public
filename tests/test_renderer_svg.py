@@ -250,7 +250,9 @@ class SvgRendererTests(unittest.TestCase):
             diagram = parse_diagram(AUTO_SIZE_DSL)
             lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
             slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
-            dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+            dimensions = _compute_node_dimensions(
+                diagram, lane_index_by_id, slot_by_node
+            )
 
             target_width, target_height = dimensions["target"]
             base_width, base_height = _shape_size(diagram.nodes[-1].shape)
@@ -321,7 +323,9 @@ class SvgRendererTests(unittest.TestCase):
         diagram = parse_diagram(STRAIGHT_DSL)
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
         slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
-        node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
 
         lane_body_y = 18.0 + 48.0 + 40.0
         lane_width = _compute_lane_width(
@@ -371,7 +375,9 @@ class SvgRendererTests(unittest.TestCase):
             diagram = parse_diagram(CAPACITY_DSL)
             lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
             slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
-            dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+            dimensions = _compute_node_dimensions(
+                diagram, lane_index_by_id, slot_by_node
+            )
 
             target_width, target_height = dimensions["target"]
             self.assertGreaterEqual(max(target_width, target_height), 60.0)

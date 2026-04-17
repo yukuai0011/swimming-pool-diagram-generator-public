@@ -134,7 +134,9 @@ def render_svg(diagram: Diagram) -> str:
     )
 
     chart_width = _snap_to_grid(lane_count * lane_width)
-    chart_height = _snap_to_grid(title_height + lane_header_height + body_height, half=True)
+    chart_height = _snap_to_grid(
+        title_height + lane_header_height + body_height, half=True
+    )
     svg_width = chart_x * 2 + chart_width
     svg_height = chart_y * 2 + chart_height
 
@@ -383,21 +385,23 @@ def _resolve_layout_tuning(
     best_result = (initial_lane_width, base_incident_step, base_cross_y_step)
     best_dense_pairs = float("inf")
 
-    width_candidates = sorted(
-        {
-            _snap_to_grid(initial_lane_width),
-            _snap_to_grid(initial_lane_width + max(12.0, min_line_gap * 0.8)),
-            _snap_to_grid(initial_lane_width + max(24.0, min_line_gap * 1.6)),
-        }
-    )
+    width_candidates = sorted({
+        _snap_to_grid(initial_lane_width),
+        _snap_to_grid(initial_lane_width + max(12.0, min_line_gap * 0.8)),
+        _snap_to_grid(initial_lane_width + max(24.0, min_line_gap * 1.6)),
+    })
     incident_factors = [1.0, 1.2, 1.4, 1.6, 1.8]
     cross_factors = [1.0, 1.2, 1.4]
 
     for lane_width in width_candidates:
         for incident_factor in incident_factors:
-            incident_step = _snap_to_grid(base_incident_step * incident_factor, half=True)
+            incident_step = _snap_to_grid(
+                base_incident_step * incident_factor, half=True
+            )
             for cross_factor in cross_factors:
-                cross_y_step = _snap_to_grid(base_cross_y_step * cross_factor, half=True)
+                cross_y_step = _snap_to_grid(
+                    base_cross_y_step * cross_factor, half=True
+                )
                 boxes = _build_boxes(
                     diagram,
                     lane_index_by_id,
@@ -499,7 +503,9 @@ def _build_connection_paths(
         connection_paths, min_line_gap=min_line_gap
     )
     if lane_borders_x:
-        connection_paths = _nudge_paths_off_lane_borders(connection_paths, lane_borders_x)
+        connection_paths = _nudge_paths_off_lane_borders(
+            connection_paths, lane_borders_x
+        )
         connection_paths = _separate_overlapping_vertical_channels(
             connection_paths,
             min_line_gap=min_line_gap,
@@ -516,7 +522,10 @@ def _build_connection_paths(
 
 
 def _lane_borders_x(chart_x: float, lane_width: float, lane_count: int) -> list[float]:
-    return [_snap_to_grid(chart_x + index * lane_width, half=True) for index in range(lane_count + 1)]
+    return [
+        _snap_to_grid(chart_x + index * lane_width, half=True)
+        for index in range(lane_count + 1)
+    ]
 
 
 def _nudge_paths_off_lane_borders(
@@ -576,7 +585,9 @@ def _nudge_single_path_off_borders(
     return _snap_path_to_grid(adjusted, half=True)
 
 
-def _match_border_key(x_value: float, border_to_shift: dict[float, float]) -> float | None:
+def _match_border_key(
+    x_value: float, border_to_shift: dict[float, float]
+) -> float | None:
     for border in border_to_shift:
         if abs(x_value - border) < 1e-6:
             return border
@@ -595,7 +606,9 @@ def _normalize_path(path: list[tuple[float, float]]) -> list[tuple[float, float]
 
     normalized: list[tuple[float, float]] = [deduped[0]]
     for point in deduped[1:]:
-        if len(normalized) >= 2 and _is_axis_collinear(normalized[-2], normalized[-1], point):
+        if len(normalized) >= 2 and _is_axis_collinear(
+            normalized[-2], normalized[-1], point
+        ):
             normalized[-1] = point
         else:
             normalized.append(point)
@@ -1204,7 +1217,9 @@ def _vertical_label_lines(label_text: str) -> list[str]:
 
     token = words[0] if words else text
     chunk_size = 3
-    return [token[index : index + chunk_size] for index in range(0, len(token), chunk_size)]
+    return [
+        token[index : index + chunk_size] for index in range(0, len(token), chunk_size)
+    ]
 
 
 def _text_capacity(box: NodeBox) -> int:
@@ -1248,10 +1263,7 @@ def _compute_node_dimensions(
     for node in diagram.nodes:
         counts = side_counts[node.id]
         total_connections = (
-            counts["left"]
-            + counts["right"]
-            + counts["top"]
-            + counts["bottom"]
+            counts["left"] + counts["right"] + counts["top"] + counts["bottom"]
         )
 
         width_units, height_units = _shape_grid_size(node.shape)
