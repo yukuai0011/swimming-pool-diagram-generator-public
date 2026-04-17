@@ -20,6 +20,8 @@ Current scope (v0.1):
 - Adaptive lane width under high connection density to reduce full line overlap
 - Iterative readability pass: expands lane width further if connector channels are still visually dense
 - Global connector spacing setting (`min_line_gap`) for both horizontal and vertical channels
+- Automatic node size adjustment from connector pressure and text length
+- Automatic text wrapping/newline layout inside nodes when additional space is available
 - Flow order: **lanes → nodes → connections**
 
 ## Quick start (with uv)
@@ -102,6 +104,7 @@ connect move --> order : 同步销售流程
 
 - `--min-line-gap <number>` sets the global minimum distance (in pixels) between parallel connector channels.
 - This setting affects both horizontal and vertical line spacing for the entire render pass.
+- The setting also influences minimum node side span when many connectors attach on one side.
 
 ## Project structure
 

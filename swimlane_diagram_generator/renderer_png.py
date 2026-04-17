@@ -11,14 +11,16 @@ from .renderer_svg import (
     LineJump,
     NodeBox,
     _assign_vertical_slots,
+    _build_boxes,
     _build_connection_paths,
     _compute_lane_width,
     _compute_line_jumps,
+    _compute_node_dimensions,
     _label_anchor,
     _resolve_layout_tuning,
-    _shape_size,
     _text_capacity,
     _wrap_text,
+    get_global_min_line_gap,
 )
 
 LINE_COLOR = "#111827"
@@ -36,16 +38,26 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     lane_count = len(diagram.lanes)
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
     slot_by_node, slot_count = _assign_vertical_slots(diagram, lane_index_by_id)
+    node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
 
     chart_x = 18.0
     chart_y = 18.0
-    lane_width = _compute_lane_width(diagram, lane_index_by_id)
+    lane_width = _compute_lane_width(
+        diagram,
+        lane_index_by_id,
+        node_dimensions=node_dimensions,
+    )
     title_height = 48.0 if diagram.title else 36.0
     lane_header_height = 40.0
 
     first_row_offset = 54.0
-    row_gap = 104.0
-    body_height = max(320.0, first_row_offset + max(slot_count - 1, 0) * row_gap + 92.0)
+    max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
+    min_line_gap = get_global_min_line_gap()
+    row_gap = max(104.0, max_node_height + max(24.0, min_line_gap * 1.2))
+    body_height = max(
+        320.0,
+        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
+    )
 
     lane_body_y = chart_y + title_height + lane_header_height
     lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
@@ -56,30 +68,25 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         lane_body_y,
         first_row_offset,
         row_gap,
+        node_dimensions=node_dimensions,
     )
 
     chart_width = lane_count * lane_width
     chart_height = title_height + lane_header_height + body_height
-    image_width = int(round(chart_x * 2 + chart_width))
-    image_height = int(round(chart_y * 2 + chart_height))
+    image_width = round(chart_x * 2 + chart_width)
+    image_height = round(chart_y * 2 + chart_height)
 
-    boxes: dict[str, NodeBox] = {}
-    for node in diagram.nodes:
-        lane_index = lane_index_by_id[node.lane_id]
-        node_width, node_height = _shape_size(node.shape)
-        slot = slot_by_node[node.id]
-        x = chart_x + lane_index * lane_width + lane_width / 2
-        y = lane_body_y + first_row_offset + slot * row_gap
-        boxes[node.id] = NodeBox(
-            node_id=node.id,
-            lane_index=lane_index,
-            shape=node.shape,
-            text=node.text,
-            x=x,
-            y=y,
-            width=node_width,
-            height=node_height,
-        )
+    boxes = _build_boxes(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        chart_x,
+        lane_body_y,
+        first_row_offset,
+        row_gap,
+        node_dimensions=node_dimensions,
+    )
 
     connection_paths = _build_connection_paths(
         diagram,

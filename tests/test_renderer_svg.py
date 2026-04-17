@@ -7,9 +7,11 @@ from swimlane_diagram_generator.renderer_svg import (
     _build_connection_paths,
     _compute_lane_width,
     _compute_line_jumps,
+    _compute_node_dimensions,
     _count_close_parallel_segments,
     _label_anchor,
     _resolve_layout_tuning,
+    _shape_size,
     get_global_min_line_gap,
     render_svg,
     set_global_min_line_gap,
@@ -93,6 +95,27 @@ node reject in partner process "驳回并补充资料"
 connect start --> receive
 connect receive --> triage
 connect triage --> reject
+"""
+
+AUTO_SIZE_DSL = """swimlaneDiagram
+title Auto Size
+
+lane a "A"
+lane b "B"
+lane c "C"
+lane d "D"
+lane e "E"
+
+node s1 in a process "S1"
+node s2 in b process "S2"
+node s3 in c process "S3"
+node s4 in d process "S4"
+node target in e process "这是一个很长很长的说明文本，用于测试自动换行和节点尺寸自动扩展能力"
+
+connect s1 --> target
+connect s2 --> target
+connect s3 --> target
+connect s4 --> target
 """
 
 
@@ -185,8 +208,27 @@ class SvgRendererTests(unittest.TestCase):
             cross_y_step=cross_y_step,
         )
 
+        self.assertEqual(len(paths[0]), 2)
         first_path_x = {round(point[0], 2) for point in paths[0]}
         self.assertEqual(len(first_path_x), 1)
+
+    def test_node_auto_size_respects_text_and_line_gap(self) -> None:
+        original_gap = get_global_min_line_gap()
+        try:
+            set_global_min_line_gap(15.0)
+            diagram = parse_diagram(AUTO_SIZE_DSL)
+            lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+            slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+            dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+
+            target_width, target_height = dimensions["target"]
+            base_width, base_height = _shape_size(diagram.nodes[-1].shape)
+
+            self.assertGreaterEqual(target_height, 45.0)
+            self.assertGreater(target_height, base_height)
+            self.assertGreater(target_width, base_width)
+        finally:
+            set_global_min_line_gap(original_gap)
 
     def test_global_min_line_gap_influences_tuning(self) -> None:
         original_gap = get_global_min_line_gap()

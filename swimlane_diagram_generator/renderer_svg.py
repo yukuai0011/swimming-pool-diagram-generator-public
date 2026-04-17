@@ -73,16 +73,25 @@ def render_svg(diagram: Diagram) -> str:
     lane_count = len(diagram.lanes)
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
     slot_by_node, slot_count = _assign_vertical_slots(diagram, lane_index_by_id)
+    node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
 
     chart_x = 18.0
     chart_y = 18.0
-    lane_width = _compute_lane_width(diagram, lane_index_by_id)
+    lane_width = _compute_lane_width(
+        diagram,
+        lane_index_by_id,
+        node_dimensions=node_dimensions,
+    )
     title_height = 48.0 if diagram.title else 36.0
     lane_header_height = 40.0
 
     first_row_offset = 54.0
-    row_gap = 104.0
-    body_height = max(320.0, first_row_offset + max(slot_count - 1, 0) * row_gap + 92.0)
+    max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
+    row_gap = max(104.0, max_node_height + max(24.0, get_global_min_line_gap() * 1.2))
+    body_height = max(
+        320.0,
+        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
+    )
 
     lane_body_y = chart_y + title_height + lane_header_height
     lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
@@ -93,6 +102,7 @@ def render_svg(diagram: Diagram) -> str:
         lane_body_y,
         first_row_offset,
         row_gap,
+        node_dimensions=node_dimensions,
     )
 
     chart_width = lane_count * lane_width
@@ -109,6 +119,7 @@ def render_svg(diagram: Diagram) -> str:
         lane_body_y,
         first_row_offset,
         row_gap,
+        node_dimensions=node_dimensions,
     )
     connection_paths = _build_connection_paths(
         diagram,
@@ -268,12 +279,23 @@ def _shape_size(shape: Shape) -> tuple[float, float]:
     return 144.0, 66.0
 
 
-def _compute_lane_width(diagram: Diagram, lane_index_by_id: dict[str, int]) -> float:
+def _compute_lane_width(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    *,
+    node_dimensions: dict[str, tuple[float, float]] | None = None,
+) -> float:
     base_width = 210.0
-    shape_need = (
-        max((_shape_size(node.shape)[0] for node in diagram.nodes), default=144.0)
-        + 42.0
-    )
+    if node_dimensions is None:
+        shape_need = (
+            max((_shape_size(node.shape)[0] for node in diagram.nodes), default=144.0)
+            + 42.0
+        )
+    else:
+        shape_need = (
+            max((node_dimensions[node.id][0] for node in diagram.nodes), default=144.0)
+            + 42.0
+        )
     title_need = max(
         (_estimate_text_width(lane.title, 14) + 32.0 for lane in diagram.lanes),
         default=base_width,
@@ -291,6 +313,7 @@ def _resolve_lane_width_for_clarity(
     lane_body_y: float,
     first_row_offset: float,
     row_gap: float,
+    node_dimensions: dict[str, tuple[float, float]] | None = None,
 ) -> float:
     lane_width, _, _ = _resolve_layout_tuning(
         diagram,
@@ -300,6 +323,7 @@ def _resolve_lane_width_for_clarity(
         lane_body_y,
         first_row_offset,
         row_gap,
+        node_dimensions=node_dimensions,
     )
     return lane_width
 
@@ -312,6 +336,8 @@ def _resolve_layout_tuning(
     lane_body_y: float,
     first_row_offset: float,
     row_gap: float,
+    *,
+    node_dimensions: dict[str, tuple[float, float]] | None = None,
 ) -> tuple[float, float, float]:
     min_line_gap = get_global_min_line_gap()
     base_incident_step = max(10.0, min_line_gap)
@@ -342,6 +368,7 @@ def _resolve_layout_tuning(
                     lane_body_y=lane_body_y,
                     first_row_offset=first_row_offset,
                     row_gap=row_gap,
+                    node_dimensions=node_dimensions,
                 )
                 connection_paths = _build_connection_paths(
                     diagram,
@@ -373,11 +400,16 @@ def _build_boxes(
     lane_body_y: float,
     first_row_offset: float,
     row_gap: float,
+    *,
+    node_dimensions: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, NodeBox]:
     boxes: dict[str, NodeBox] = {}
     for node in diagram.nodes:
         lane_index = lane_index_by_id[node.lane_id]
-        node_width, node_height = _shape_size(node.shape)
+        if node_dimensions is None:
+            node_width, node_height = _shape_size(node.shape)
+        else:
+            node_width, node_height = node_dimensions[node.id]
         slot = slot_by_node[node.id]
         x = chart_x + lane_index * lane_width + lane_width / 2
         y = lane_body_y + first_row_offset + slot * row_gap
@@ -606,13 +638,19 @@ def _route_connection(
 
     if source.lane_index == target.lane_index:
         is_downward = target.y >= source.y
-        channel_x = (source.x + target.x) / 2
         if is_downward:
             start = (source.x, source.y + source.height / 2)
             end = (target.x, target.y - target.height / 2)
         else:
             start = (source.x, source.y - source.height / 2)
             end = (target.x, target.y + target.height / 2)
+
+        if abs(start[0] - end[0]) < 1e-6:
+            return [start, end]
+
+        channel_x = (start[0] + end[0]) / 2
+        if abs(channel_x - start[0]) < 1e-6 and abs(channel_x - end[0]) < 1e-6:
+            return [start, end]
 
         return [start, (channel_x, start[1]), (channel_x, end[1]), end]
 
@@ -975,12 +1013,15 @@ def _draw_connection_label_svg(
 
 
 def _text_capacity(box: NodeBox) -> int:
-    width = box.width
-    if box.shape is Shape.DECISION:
+    return _text_capacity_for_dimensions(box.shape, box.width)
+
+
+def _text_capacity_for_dimensions(shape: Shape, width: float) -> int:
+    if shape is Shape.DECISION:
         width *= 0.62
-    elif box.shape is Shape.START_END:
+    elif shape is Shape.START_END:
         width *= 0.78
-    elif box.shape is Shape.DATA:
+    elif shape is Shape.DATA:
         width *= 0.82
     width = max(48.0, width - 20.0)
     return max(4, int(width / 7.2))
@@ -997,7 +1038,88 @@ def _wrap_text(text: str, max_chars: int) -> list[str]:
             replace_whitespace=False,
         )
         wrapped_lines.extend(lines or [chunk])
-    return wrapped_lines[:4] if wrapped_lines else [text]
+    return wrapped_lines if wrapped_lines else [text]
+
+
+def _compute_node_dimensions(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    slot_by_node: dict[str, int],
+) -> dict[str, tuple[float, float]]:
+    min_line_gap = get_global_min_line_gap()
+    side_counts = _compute_node_side_connection_counts(diagram, lane_index_by_id, slot_by_node)
+    dimensions: dict[str, tuple[float, float]] = {}
+
+    for node in diagram.nodes:
+        base_width, base_height = _shape_size(node.shape)
+        text_width_raw = _estimate_text_width(node.text, 13) + 24.0
+        width_cap = max(base_width + 42.0, 240.0)
+        width = max(base_width, min(text_width_raw, width_cap))
+
+        capacity = _text_capacity_for_dimensions(node.shape, width)
+        if text_width_raw > width and capacity > 8:
+            capacity = max(8, int(capacity * 0.8))
+        wrapped_lines = _wrap_text(node.text, capacity)
+        text_height = len(wrapped_lines) * 15.0 + 14.0
+        text_based_height = max(base_height, text_height + 12.0)
+        if text_width_raw > width:
+            overflow_ratio = text_width_raw / max(width, 1.0)
+            text_based_height = max(
+                text_based_height,
+                base_height + max(0.0, overflow_ratio - 1.0) * 26.0,
+            )
+
+        counts = side_counts[node.id]
+        side_height_span = max(
+            max(0, counts["left"] - 1) * min_line_gap,
+            max(0, counts["right"] - 1) * min_line_gap,
+        )
+        side_width_span = max(
+            max(0, counts["top"] - 1) * min_line_gap,
+            max(0, counts["bottom"] - 1) * min_line_gap,
+        )
+
+        width = max(width, side_width_span, base_width)
+        height = max(text_based_height, side_height_span, base_height)
+        dimensions[node.id] = (width, height)
+
+    return dimensions
+
+
+def _compute_node_side_connection_counts(
+    diagram: Diagram,
+    lane_index_by_id: dict[str, int],
+    slot_by_node: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {
+        node.id: {"left": 0, "right": 0, "top": 0, "bottom": 0}
+        for node in diagram.nodes
+    }
+    node_lane = {node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes}
+
+    for connection in diagram.connections:
+        source_lane = node_lane[connection.source]
+        target_lane = node_lane[connection.target]
+        source_slot = slot_by_node[connection.source]
+        target_slot = slot_by_node[connection.target]
+
+        if source_lane == target_lane:
+            if target_slot >= source_slot:
+                counts[connection.source]["bottom"] += 1
+                counts[connection.target]["top"] += 1
+            else:
+                counts[connection.source]["top"] += 1
+                counts[connection.target]["bottom"] += 1
+            continue
+
+        if target_lane > source_lane:
+            counts[connection.source]["right"] += 1
+            counts[connection.target]["left"] += 1
+        else:
+            counts[connection.source]["left"] += 1
+            counts[connection.target]["right"] += 1
+
+    return counts
 
 
 def _assign_vertical_slots(
