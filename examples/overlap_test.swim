@@ -1,0 +1,31 @@
+swimlaneDiagram
+title Vertical Line Crossed by Multiple Horizontal Lines Test
+
+lane left "Left Lane"
+lane center "Center Lane"
+lane right "Right Lane"
+
+node top in center [start/end] "Top"
+node mid1 in left process "Mid Left 1"
+node mid2 in left process "Mid Left 2"
+node mid3 in left process "Mid Left 3"
+node mid4 in right process "Mid Right 1"
+node mid5 in right process "Mid Right 2"
+node mid6 in right process "Mid Right 3"
+node bottom in center [start/end] "Bottom"
+node extra1 in right process "Extra R1"
+node extra2 in left process "Extra L1"
+node extra3 in right process "Extra R2"
+node extra4 in left process "Extra L2"
+
+# Vertical line through center
+connect top --> bottom : Vertical Flow
+
+# Horizontal lines crossing the vertical
+connect mid1 --> mid4 : Horizontal A
+connect mid2 --> mid5 : Horizontal B
+connect mid3 --> mid6 : Horizontal C
+
+# Additional crossing lines in opposite direction
+connect extra1 --> extra2 : Reverse Flow 1
+connect extra3 --> extra4 : Reverse Flow 2
