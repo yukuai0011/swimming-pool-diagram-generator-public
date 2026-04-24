@@ -5,19 +5,14 @@ from collections import defaultdict
 from dataclasses import dataclass
 from html import escape
 
+from .layout import (
+    GLOBAL_RENDER_CONFIG,
+    NodeBox,
+    RenderGlobalConfig,
+    get_global_min_line_gap,
+    set_global_min_line_gap,
+)
 from .model import Diagram, Node, Shape
-
-
-@dataclass(slots=True, frozen=True)
-class NodeBox:
-    node_id: str
-    lane_index: int
-    shape: Shape
-    text: str
-    x: float
-    y: float
-    width: float
-    height: float
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,22 +41,6 @@ class _Segment:
     x2: float
     y2: float
     orientation: str
-
-
-@dataclass(slots=True)
-class RenderGlobalConfig:
-    min_line_gap: float = 12.0
-
-
-GLOBAL_RENDER_CONFIG = RenderGlobalConfig()
-
-
-def set_global_min_line_gap(min_line_gap: float) -> None:
-    GLOBAL_RENDER_CONFIG.min_line_gap = max(4.0, float(min_line_gap))
-
-
-def get_global_min_line_gap() -> float:
-    return GLOBAL_RENDER_CONFIG.min_line_gap
 
 
 def _grid_size() -> float:

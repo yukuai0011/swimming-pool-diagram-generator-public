@@ -4,9 +4,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from .layout import set_global_min_line_gap
 from .parser import DiagramSyntaxError, parse_diagram
 from .renderer_png import render_png_bytes
-from .renderer_svg import render_svg, set_global_min_line_gap
+from .renderer_svg import render_svg
 
 EXAMPLE_DSL = """swimlaneDiagram
 title 售后退货处理（复杂示例：跨泳道与交叉线）
