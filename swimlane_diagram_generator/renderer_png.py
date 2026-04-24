@@ -44,30 +44,29 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
     grid_size = get_global_min_line_gap()
 
-    chart_x = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
-    chart_y = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
+    chart_x = _snap_to_grid(max(18.0, grid_size * 1.5))
+    chart_y = _snap_to_grid(max(18.0, grid_size * 1.5))
     lane_width = _compute_lane_width(
         diagram,
         lane_index_by_id,
         node_dimensions=node_dimensions,
     )
-    title_height = _snap_to_grid(48.0 if diagram.title else 36.0, half=True)
-    lane_header_height = _snap_to_grid(40.0, half=True)
+    title_height = _snap_to_grid(48.0 if diagram.title else 36.0)
+    lane_header_height = _snap_to_grid(40.0)
 
-    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0), half=True)
+    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0))
     max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
     min_line_gap = get_global_min_line_gap()
     row_gap = _snap_to_grid(
         max(104.0, max_node_height + max(24.0, min_line_gap * 1.2)),
-        half=True,
     )
     body_height = max(
         320.0,
         first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
     )
-    body_height = _snap_to_grid(body_height, half=True)
+    body_height = _snap_to_grid(body_height)
 
-    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height, half=True)
+    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height)
     lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
         diagram,
         lane_index_by_id,
@@ -80,9 +79,7 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     )
 
     chart_width = _snap_to_grid(lane_count * lane_width)
-    chart_height = _snap_to_grid(
-        title_height + lane_header_height + body_height, half=True
-    )
+    chart_height = _snap_to_grid(title_height + lane_header_height + body_height)
     image_width = round(chart_x * 2 + chart_width)
     image_height = round(chart_y * 2 + chart_height)
 
