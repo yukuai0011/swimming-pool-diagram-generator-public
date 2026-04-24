@@ -63,79 +63,26 @@ def _snap_path_to_grid(
 
 
 def render_svg(diagram: Diagram) -> str:
-    if not diagram.lanes:
-        raise ValueError("Cannot render diagram without lanes.")
-    if not diagram.nodes:
-        raise ValueError("Cannot render diagram without nodes.")
+    """Render diagram to SVG string using shared layout solver."""
+    from .layout import LabelBox, LabelStem, build_layout
 
-    lane_count = len(diagram.lanes)
-    lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
-    slot_by_node, slot_count = _assign_vertical_slots(diagram, lane_index_by_id)
-    node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
-    grid_size = _grid_size()
+    layout = build_layout(diagram)
+    grid_size = layout.grid_size
+    chart_x = layout.chart_x
+    chart_y = layout.chart_y
+    chart_width = layout.chart_width
+    chart_height = layout.chart_height
+    title_height = layout.title_height
+    lane_header_height = layout.lane_header_height
+    lane_body_y = layout.lane_body_y
+    body_height = layout.body_height
+    lane_width = layout.lane_width
+    boxes = layout.boxes
+    connections = layout.connections
+    line_jumps = layout.line_jumps
 
-    chart_x = _snap_to_grid(max(24.0, grid_size * 2.0))
-    chart_y = _snap_to_grid(max(24.0, grid_size * 2.0))
-    lane_width = _compute_lane_width(
-        diagram,
-        lane_index_by_id,
-        node_dimensions=node_dimensions,
-    )
-    title_height = _snap_to_grid(48.0 if diagram.title else 36.0)
-    lane_header_height = _snap_to_grid(48.0)
-
-    first_row_offset = _snap_to_grid(max(60.0, grid_size * 4.0))
-    max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
-    row_gap = _snap_to_grid(
-        max(108.0, max_node_height + grid_size * 2.0),
-    )
-    body_height = max(
-        320.0,
-        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 60.0,
-    )
-    body_height = _snap_to_grid(body_height)
-
-    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height)
-    lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
-        diagram,
-        lane_index_by_id,
-        slot_by_node,
-        lane_width,
-        lane_body_y,
-        first_row_offset,
-        row_gap,
-        node_dimensions=node_dimensions,
-    )
-
-    chart_width = _snap_to_grid(lane_count * lane_width)
-    chart_height = _snap_to_grid(
-        title_height + lane_header_height + body_height
-    )
     svg_width = chart_x * 2 + chart_width
     svg_height = chart_y * 2 + chart_height
-
-    boxes = _build_boxes(
-        diagram,
-        lane_index_by_id,
-        slot_by_node,
-        lane_width,
-        chart_x,
-        lane_body_y,
-        first_row_offset,
-        row_gap,
-        node_dimensions=node_dimensions,
-    )
-    lane_borders_x = _lane_borders_x(chart_x, lane_width, lane_count)
-    connection_paths = _build_connection_paths(
-        diagram,
-        boxes,
-        lane_index_by_id,
-        incident_step=incident_step,
-        cross_y_step=cross_y_step,
-        lane_borders_x=lane_borders_x,
-    )
-
-    line_jumps = _compute_line_jumps(connection_paths)
 
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(svg_width)}" height="{_fmt(svg_height)}" '
@@ -174,7 +121,8 @@ def render_svg(diagram: Diagram) -> str:
         )
 
     # Connection lines first.
-    for path_points in connection_paths:
+    for conn_layout in connections:
+        path_points = conn_layout.points
         points_attr = " ".join(f"{_fmt(x)},{_fmt(y)}" for x, y in path_points)
         parts.append(
             f'  <polyline points="{points_attr}" fill="none" stroke="#111827" stroke-width="1.8" marker-end="url(#arrowhead)" />'
@@ -184,11 +132,20 @@ def render_svg(diagram: Diagram) -> str:
     for jump in line_jumps:
         parts.extend(_draw_jump_svg(jump))
 
-    # Draw labels over lines and bumps.
-    for connection, path_points in zip(diagram.connections, connection_paths):
-        if not connection.label:
-            continue
-        parts.extend(_draw_connection_label_svg(path_points, connection.label))
+    # Draw label stems (diagonal lines from connector to label).
+    for conn_layout in connections:
+        if conn_layout.stem:
+            stem = conn_layout.stem
+            parts.append(
+                f'  <line x1="{_fmt(stem.start[0])}" y1="{_fmt(stem.start[1])}" '
+                f'x2="{_fmt(stem.end[0])}" y2="{_fmt(stem.end[1])}" '
+                f'stroke="#111827" stroke-width="1.2" stroke-dasharray="3,2" />'
+            )
+
+    # Draw label boxes.
+    for conn_layout in connections:
+        if conn_layout.label_box:
+            parts.extend(_draw_label_box_svg(conn_layout.label_box))
 
     # Nodes on top of everything.
     for node in diagram.nodes:
@@ -1137,6 +1094,41 @@ def _draw_jump_svg(jump: LineJump) -> list[str]:
     fragments.append(
         f'  <path class="line-jump" d="{path}" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round" />'
     )
+    return fragments
+
+
+def _draw_label_box_svg(label_box) -> list[str]:
+    """Render a LabelBox from the layout module to SVG fragments."""
+    from .layout import LabelBox
+    fragments: list[str] = []
+    x = label_box.x - label_box.width / 2
+    y = label_box.y - label_box.height / 2
+    is_vertical = len(label_box.text_lines) > 1 or (
+        len(label_box.text_lines) == 1 and len(label_box.text_lines[0]) == 1
+    )
+    if is_vertical and len(label_box.text_lines) > 1:
+        line_height = 12.0
+        text_start_y = label_box.y - ((len(label_box.text_lines) - 1) * line_height) / 2
+        fragments.append(
+            f'  <rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(label_box.width)}" height="{_fmt(label_box.height)}" fill="#ffffff" fill-opacity="0.92" rx="3" />'
+        )
+        fragments.append(
+            f'  <text class="vertical-label" x="{_fmt(label_box.x)}" y="{_fmt(text_start_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">'
+        )
+        for index, line in enumerate(label_box.text_lines):
+            dy = "0" if index == 0 else _fmt(line_height)
+            fragments.append(
+                f'    <tspan x="{_fmt(label_box.x)}" dy="{dy}">{escape(line)}</tspan>'
+            )
+        fragments.append("  </text>")
+    else:
+        text = label_box.text_lines[0] if label_box.text_lines else ""
+        fragments.append(
+            f'  <rect x="{_fmt(x)}" y="{_fmt(y)}" width="{_fmt(label_box.width)}" height="{_fmt(label_box.height)}" fill="#ffffff" fill-opacity="0.92" rx="3" />'
+        )
+        fragments.append(
+            f'  <text x="{_fmt(label_box.x)}" y="{_fmt(label_box.y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(text)}</text>'
+        )
     return fragments
 
 
