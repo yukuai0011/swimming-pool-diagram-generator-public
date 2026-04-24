@@ -6,24 +6,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from .layout import build_layout
 from .model import Diagram, Shape
-from .renderer_svg import (
-    LineJump,
-    NodeBox,
-    _assign_vertical_slots,
-    _build_boxes,
-    _build_connection_paths,
-    _compute_lane_width,
-    _compute_line_jumps,
-    _compute_node_dimensions,
-    _label_anchor,
-    _lane_borders_x,
-    _resolve_layout_tuning,
-    _snap_to_grid,
-    _text_capacity,
-    _wrap_text,
-    get_global_min_line_gap,
-)
+from .renderer_svg import _text_capacity, _wrap_text
 
 LINE_COLOR = "#111827"
 WHITE = "#ffffff"
@@ -33,79 +18,24 @@ FontLike = ImageFont.FreeTypeFont | ImageFont.ImageFont
 
 
 def render_png_bytes(diagram: Diagram) -> bytes:
-    if not diagram.lanes:
-        raise ValueError("Cannot render diagram without lanes.")
-    if not diagram.nodes:
-        raise ValueError("Cannot render diagram without nodes.")
+    """Render diagram to PNG bytes using shared layout solver."""
+    layout = build_layout(diagram)
+    grid_size = layout.grid_size
+    chart_x = layout.chart_x
+    chart_y = layout.chart_y
+    chart_width = layout.chart_width
+    chart_height = layout.chart_height
+    title_height = layout.title_height
+    lane_header_height = layout.lane_header_height
+    lane_body_y = layout.lane_body_y
+    body_height = layout.body_height
+    lane_width = layout.lane_width
+    boxes = layout.boxes
+    connections = layout.connections
+    line_jumps = layout.line_jumps
 
-    lane_count = len(diagram.lanes)
-    lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
-    slot_by_node, slot_count = _assign_vertical_slots(diagram, lane_index_by_id)
-    node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
-    grid_size = get_global_min_line_gap()
-
-    chart_x = _snap_to_grid(max(18.0, grid_size * 1.5))
-    chart_y = _snap_to_grid(max(18.0, grid_size * 1.5))
-    lane_width = _compute_lane_width(
-        diagram,
-        lane_index_by_id,
-        node_dimensions=node_dimensions,
-    )
-    title_height = _snap_to_grid(48.0 if diagram.title else 36.0)
-    lane_header_height = _snap_to_grid(40.0)
-
-    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0))
-    max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
-    min_line_gap = get_global_min_line_gap()
-    row_gap = _snap_to_grid(
-        max(104.0, max_node_height + max(24.0, min_line_gap * 1.2)),
-    )
-    body_height = max(
-        320.0,
-        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
-    )
-    body_height = _snap_to_grid(body_height)
-
-    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height)
-    lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
-        diagram,
-        lane_index_by_id,
-        slot_by_node,
-        lane_width,
-        lane_body_y,
-        first_row_offset,
-        row_gap,
-        node_dimensions=node_dimensions,
-    )
-
-    chart_width = _snap_to_grid(lane_count * lane_width)
-    chart_height = _snap_to_grid(title_height + lane_header_height + body_height)
     image_width = round(chart_x * 2 + chart_width)
     image_height = round(chart_y * 2 + chart_height)
-
-    boxes = _build_boxes(
-        diagram,
-        lane_index_by_id,
-        slot_by_node,
-        lane_width,
-        chart_x,
-        lane_body_y,
-        first_row_offset,
-        row_gap,
-        node_dimensions=node_dimensions,
-    )
-    lane_borders_x = _lane_borders_x(chart_x, lane_width, lane_count)
-
-    connection_paths = _build_connection_paths(
-        diagram,
-        boxes,
-        lane_index_by_id,
-        incident_step=incident_step,
-        cross_y_step=cross_y_step,
-        lane_borders_x=lane_borders_x,
-    )
-
-    jumps = _compute_line_jumps(connection_paths)
 
     image = Image.new("RGB", (image_width, image_height), WHITE)
     draw = ImageDraw.Draw(image)
@@ -176,19 +106,25 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         )
 
     # Connection lines
-    for path_points in connection_paths:
+    for conn_layout in connections:
+        path_points = conn_layout.points
         draw.line(path_points, fill=LINE_COLOR, width=3)
         _draw_arrowhead(draw, path_points[-2], path_points[-1], size=9.0)
 
     # Bridge bumps on crossings
-    for jump in jumps:
+    for jump in line_jumps:
         _draw_jump_png(draw, jump)
 
-    # Connection labels
-    for connection, path_points in zip(diagram.connections, connection_paths):
-        if not connection.label:
-            continue
-        _draw_label(draw, path_points, connection.label)
+    # Label stems (diagonal lines from connector to label)
+    for conn_layout in connections:
+        if conn_layout.stem:
+            stem = conn_layout.stem
+            draw.line([stem.start, stem.end], fill=LINE_COLOR, width=2)
+
+    # Label boxes
+    for conn_layout in connections:
+        if conn_layout.label_box:
+            _draw_label_box_png(draw, conn_layout.label_box)
 
     # Nodes
     for node in diagram.nodes:
@@ -332,6 +268,34 @@ def _draw_node_text(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
             font,
             LINE_COLOR,
         )
+
+
+def _draw_label_box_png(draw: ImageDraw.ImageDraw, label_box) -> None:
+    """Render a LabelBox from the layout module to PNG."""
+    font = _load_font(12)
+    x = label_box.x - label_box.width / 2
+    y = label_box.y - label_box.height / 2
+
+    draw.rounded_rectangle(
+        [x, y, x + label_box.width, y + label_box.height],
+        radius=3,
+        fill=WHITE,
+    )
+
+    is_vertical = len(label_box.text_lines) > 1 or (
+        len(label_box.text_lines) == 1 and len(label_box.text_lines[0]) == 1
+    )
+
+    if is_vertical and len(label_box.text_lines) > 1:
+        line_height = 12.0
+        text_start_y = label_box.y - ((len(label_box.text_lines) - 1) * line_height) / 2
+        current_y = text_start_y
+        for line in label_box.text_lines:
+            _draw_centered_text(draw, label_box.x, current_y, line, font, LINE_COLOR)
+            current_y += line_height
+    else:
+        text = label_box.text_lines[0] if label_box.text_lines else ""
+        _draw_centered_text(draw, label_box.x, label_box.y, text, font, LINE_COLOR)
 
 
 def _draw_label(
