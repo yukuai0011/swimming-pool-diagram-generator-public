@@ -47,12 +47,9 @@ def _grid_size() -> float:
     return get_global_min_line_gap()
 
 
-def _grid_half_step() -> float:
-    return _grid_size() / 2.0
-
-
-def _snap_to_grid(value: float, *, half: bool = False) -> float:
-    step = _grid_half_step() if half else _grid_size()
+def _snap_to_grid(value: float) -> float:
+    """Snap value to full-grid coordinates only."""
+    step = _grid_size()
     if step <= 0.0:
         return value
     return round(value / step) * step
@@ -60,10 +57,9 @@ def _snap_to_grid(value: float, *, half: bool = False) -> float:
 
 def _snap_path_to_grid(
     path: list[tuple[float, float]],
-    *,
-    half: bool = True,
 ) -> list[tuple[float, float]]:
-    return [(_snap_to_grid(x, half=half), _snap_to_grid(y, half=half)) for x, y in path]
+    """Snap all path points to full-grid coordinates."""
+    return [(_snap_to_grid(x), _snap_to_grid(y)) for x, y in path]
 
 
 def render_svg(diagram: Diagram) -> str:
@@ -78,29 +74,28 @@ def render_svg(diagram: Diagram) -> str:
     node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
     grid_size = _grid_size()
 
-    chart_x = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
-    chart_y = _snap_to_grid(max(18.0, grid_size * 1.5), half=True)
+    chart_x = _snap_to_grid(max(24.0, grid_size * 2.0))
+    chart_y = _snap_to_grid(max(24.0, grid_size * 2.0))
     lane_width = _compute_lane_width(
         diagram,
         lane_index_by_id,
         node_dimensions=node_dimensions,
     )
-    title_height = _snap_to_grid(48.0 if diagram.title else 36.0, half=True)
-    lane_header_height = _snap_to_grid(40.0, half=True)
+    title_height = _snap_to_grid(48.0 if diagram.title else 36.0)
+    lane_header_height = _snap_to_grid(48.0)
 
-    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0), half=True)
+    first_row_offset = _snap_to_grid(max(60.0, grid_size * 4.0))
     max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
     row_gap = _snap_to_grid(
-        max(104.0, max_node_height + max(24.0, get_global_min_line_gap() * 1.2)),
-        half=True,
+        max(108.0, max_node_height + grid_size * 2.0),
     )
     body_height = max(
         320.0,
-        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
+        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 60.0,
     )
-    body_height = _snap_to_grid(body_height, half=True)
+    body_height = _snap_to_grid(body_height)
 
-    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height, half=True)
+    lane_body_y = _snap_to_grid(chart_y + title_height + lane_header_height)
     lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
         diagram,
         lane_index_by_id,
@@ -114,7 +109,7 @@ def render_svg(diagram: Diagram) -> str:
 
     chart_width = _snap_to_grid(lane_count * lane_width)
     chart_height = _snap_to_grid(
-        title_height + lane_header_height + body_height, half=True
+        title_height + lane_header_height + body_height
     )
     svg_width = chart_x * 2 + chart_width
     svg_height = chart_y * 2 + chart_height
@@ -267,7 +262,6 @@ def _draw_node(box: NodeBox) -> list[str]:
     line_height = 15.0
     text_y = _snap_to_grid(
         text_center_y - ((len(lines) - 1) * line_height) / 2 + 5,
-        half=True,
     )
     fragments.append(
         f'  <text x="{_fmt(box.x)}" y="{_fmt(text_y)}" text-anchor="middle" '
@@ -358,8 +352,8 @@ def _resolve_layout_tuning(
     node_dimensions: dict[str, tuple[float, float]] | None = None,
 ) -> tuple[float, float, float]:
     min_line_gap = get_global_min_line_gap()
-    base_incident_step = _snap_to_grid(max(10.0, min_line_gap), half=True)
-    base_cross_y_step = _snap_to_grid(max(5.0, min_line_gap * 0.75), half=True)
+    base_incident_step = _snap_to_grid(max(min_line_gap, min_line_gap))
+    base_cross_y_step = _snap_to_grid(max(min_line_gap, min_line_gap * 0.75))
     target_dense_pairs = 0
     best_result = (initial_lane_width, base_incident_step, base_cross_y_step)
     best_dense_pairs = float("inf")
@@ -375,11 +369,11 @@ def _resolve_layout_tuning(
     for lane_width in width_candidates:
         for incident_factor in incident_factors:
             incident_step = _snap_to_grid(
-                base_incident_step * incident_factor, half=True
+                base_incident_step * incident_factor
             )
             for cross_factor in cross_factors:
                 cross_y_step = _snap_to_grid(
-                    base_cross_y_step * cross_factor, half=True
+                    base_cross_y_step * cross_factor
                 )
                 boxes = _build_boxes(
                     diagram,
@@ -435,8 +429,8 @@ def _build_boxes(
         node_width = _snap_to_grid(node_width)
         node_height = _snap_to_grid(node_height)
         slot = slot_by_node[node.id]
-        x = _snap_to_grid(chart_x + lane_index * lane_width + lane_width / 2, half=True)
-        y = _snap_to_grid(lane_body_y + first_row_offset + slot * row_gap, half=True)
+        x = _snap_to_grid(chart_x + lane_index * lane_width + lane_width / 2)
+        y = _snap_to_grid(lane_body_y + first_row_offset + slot * row_gap)
         boxes[node.id] = NodeBox(
             node_id=node.id,
             lane_index=lane_index,
@@ -502,7 +496,7 @@ def _build_connection_paths(
 
 def _lane_borders_x(chart_x: float, lane_width: float, lane_count: int) -> list[float]:
     return [
-        _snap_to_grid(chart_x + index * lane_width, half=True)
+        _snap_to_grid(chart_x + index * lane_width)
         for index in range(lane_count + 1)
     ]
 
@@ -527,7 +521,7 @@ def _build_border_shift_lookup(lane_borders_x: list[float]) -> dict[float, float
 
     min_border = min(lane_borders_x)
     max_border = max(lane_borders_x)
-    half = _grid_half_step()
+    half = _grid_size()  # Use full grid step for shift
     lookup: dict[float, float] = {}
 
     for index, border in enumerate(lane_borders_x):
@@ -555,13 +549,13 @@ def _nudge_single_path_off_borders(
         border_key = _match_border_key(x_value, border_to_shift)
         if border_key is None:
             continue
-        remap[x_value] = _snap_to_grid(x_value + border_to_shift[border_key], half=True)
+        remap[x_value] = _snap_to_grid(x_value + border_to_shift[border_key])
 
     if not remap:
         return path
 
     adjusted = [(remap.get(x, x), y) for x, y in path]
-    return _snap_path_to_grid(adjusted, half=True)
+    return _snap_path_to_grid(adjusted)
 
 
 def _match_border_key(
@@ -796,15 +790,14 @@ def _route_connection(
             end = (target.x, target.y + target.height / 2)
 
         if abs(start[0] - end[0]) < 1e-6:
-            return _snap_path_to_grid([start, end], half=True)
+            return _snap_path_to_grid([start, end])
 
         channel_x = (start[0] + end[0]) / 2
         if abs(channel_x - start[0]) < 1e-6 and abs(channel_x - end[0]) < 1e-6:
-            return _snap_path_to_grid([start, end], half=True)
+            return _snap_path_to_grid([start, end])
 
         return _snap_path_to_grid(
             [start, (channel_x, start[1]), (channel_x, end[1]), end],
-            half=True,
         )
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
@@ -832,7 +825,6 @@ def _route_connection(
 
     return _snap_path_to_grid(
         [start, (mid_x, start[1]), (mid_x, end[1]), end],
-        half=True,
     )
 
 
@@ -901,7 +893,7 @@ def _separate_overlapping_horizontal_channels(
             candidate, occupied_channels, min_line_gap=min_line_gap
         ):
             attempt += 1
-            shift = _stagger_value(attempt, _grid_half_step())
+            shift = _stagger_value(attempt, _grid_size())
             max_shift = min_line_gap * 2.0
             shift = max(-max_shift, min(max_shift, shift))
             candidate = _shift_path_vertically(base_path, shift)
@@ -994,13 +986,13 @@ def _shift_path_middle_channel(
     x2, y2 = shifted[2]
     shifted[1] = (x1 + delta_x, y1)
     shifted[2] = (x2 + delta_x, y2)
-    return _snap_path_to_grid(shifted, half=True)
+    return _snap_path_to_grid(shifted)
 
 
 def _shift_path_vertically(
     path: list[tuple[float, float]], delta_y: float
 ) -> list[tuple[float, float]]:
-    return _snap_path_to_grid([(x, y + delta_y) for x, y in path], half=True)
+    return _snap_path_to_grid([(x, y + delta_y) for x, y in path])
 
 
 def _range_overlap(a1: float, a2: float, b1: float, b2: float) -> float:
@@ -1280,11 +1272,14 @@ def _compute_node_dimensions(
 
 
 def _shape_grid_size(shape: Shape) -> tuple[int, int]:
+    """Return even grid unit counts for each shape."""
     if shape is Shape.DECISION:
         return 4, 4
     if shape is Shape.DOCUMENT:
         return 4, 4
-    return 4, 3
+    if shape is Shape.START_END:
+        return 4, 4
+    return 4, 4  # All shapes use even units now
 
 
 def _shape_text_box_factors(shape: Shape) -> tuple[float, float]:
@@ -1310,9 +1305,9 @@ def _expand_units_for_connection_capacity(
 ) -> tuple[int, int]:
     while _node_connection_capacity(width_units, height_units) < total_connections:
         if height_units <= width_units:
-            height_units += 1
+            height_units += 2  # Increment by 2 to maintain even units
         else:
-            width_units += 1
+            width_units += 2  # Increment by 2 to maintain even units
     return width_units, height_units
 
 
@@ -1337,11 +1332,11 @@ def _fit_text_in_grid_units(
         available_text_height = max(14.0, height * text_height_factor - grid_size * 0.2)
 
         if required_text_height > available_text_height:
-            height_units += 1
+            height_units += 2  # Increment by 2 to maintain even units
             continue
 
         if text_width_raw > text_box_width * 1.25 and width_units < 16:
-            width_units += 1
+            width_units += 2  # Increment by 2 to maintain even units
             continue
 
         break
