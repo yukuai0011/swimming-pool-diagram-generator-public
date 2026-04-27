@@ -8,15 +8,16 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .model import Diagram, Shape
 from .renderer_svg import (
+    LabelPlacement,
     LineJump,
     NodeBox,
     _assign_vertical_slots,
     _build_boxes,
     _build_connection_paths,
+    _compute_label_placements,
     _compute_lane_width,
     _compute_line_jumps,
     _compute_node_dimensions,
-    _label_anchor,
     _lane_borders_x,
     _resolve_layout_tuning,
     _snap_to_grid,
@@ -109,6 +110,7 @@ def render_png_bytes(diagram: Diagram) -> bytes:
     )
 
     jumps = _compute_line_jumps(connection_paths)
+    label_placements = _compute_label_placements(diagram, connection_paths, boxes)
 
     image = Image.new("RGB", (image_width, image_height), WHITE)
     draw = ImageDraw.Draw(image)
@@ -188,10 +190,11 @@ def render_png_bytes(diagram: Diagram) -> bytes:
         _draw_jump_png(draw, jump)
 
     # Connection labels
-    for connection, path_points in zip(diagram.connections, connection_paths):
-        if not connection.label:
+    for connection_index in range(len(diagram.connections)):
+        placement = label_placements.get(connection_index)
+        if placement is None:
             continue
-        _draw_label(draw, path_points, connection.label)
+        _draw_label(draw, placement)
 
     # Nodes
     for node in diagram.nodes:
@@ -337,64 +340,50 @@ def _draw_node_text(draw: ImageDraw.ImageDraw, box: NodeBox) -> None:
         )
 
 
-def _draw_label(
-    draw: ImageDraw.ImageDraw, path_points: list[tuple[float, float]], label_text: str
-) -> None:
-    label_x, label_y, orientation = _label_anchor(path_points)
-    font = _load_font(12)
+def _draw_label(draw: ImageDraw.ImageDraw, placement: LabelPlacement) -> None:
+    draw.line(
+        [(placement.anchor_x, placement.anchor_y), (placement.attach_x, placement.attach_y)],
+        fill=LINE_COLOR,
+        width=2,
+    )
 
-    if orientation == "vertical":
-        _draw_vertical_label(draw, label_x, label_y, label_text, font)
-        return
-
-    bbox = draw.textbbox((0, 0), label_text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    pad_x = 6.0
-    pad_y = 4.0
-
-    left = label_x - text_width / 2 - pad_x
-    top = label_y - text_height / 2 - pad_y
-    right = label_x + text_width / 2 + pad_x
-    bottom = label_y + text_height / 2 + pad_y
+    left = placement.left
+    top = placement.top
+    right = placement.left + placement.width
+    bottom = placement.top + placement.height
 
     draw.rounded_rectangle([left, top, right, bottom], radius=3, fill=WHITE)
-    _draw_centered_text(draw, label_x, label_y, label_text, font, LINE_COLOR)
+
+    label_x = left + placement.width / 2
+    label_y = top + placement.height / 2
+    font = _load_font(12)
+
+    if placement.orientation == "vertical":
+        _draw_vertical_label(draw, label_x, label_y, list(placement.lines), font)
+        return
+    text = placement.lines[0] if placement.lines else (placement.text.strip() or "?")
+    _draw_centered_text(draw, label_x, label_y, text, font, LINE_COLOR)
 
 
 def _draw_vertical_label(
     draw: ImageDraw.ImageDraw,
     center_x: float,
     center_y: float,
-    label_text: str,
+    lines: list[str],
     font: FontLike,
 ) -> None:
-    chars = list(label_text) if label_text else ["?"]
-    char_sizes: list[tuple[float, float]] = []
-    for char in chars:
-        sample = char if char.strip() else "A"
-        bbox = draw.textbbox((0, 0), sample, font=font)
-        char_sizes.append((bbox[2] - bbox[0], bbox[3] - bbox[1]))
-
-    max_char_width = max((size[0] for size in char_sizes), default=8.0)
-    line_height = max((size[1] for size in char_sizes), default=12.0)
-    spacing = 1.0
-    text_height = len(chars) * line_height + max(0, len(chars) - 1) * spacing
-    pad_x = 4.0
-    pad_y = 4.0
-
-    left = center_x - max_char_width / 2 - pad_x
-    top = center_y - text_height / 2 - pad_y
-    right = center_x + max_char_width / 2 + pad_x
-    bottom = center_y + text_height / 2 + pad_y
-
-    draw.rounded_rectangle([left, top, right, bottom], radius=3, fill=WHITE)
-
-    current_y = top + pad_y + line_height / 2
-    for char in chars:
-        if char.strip():
-            _draw_centered_text(draw, center_x, current_y, char, font, LINE_COLOR)
-        current_y += line_height + spacing
+    vertical_lines = lines or ["?"]
+    line_height = 12.0
+    start_y = center_y - ((len(vertical_lines) - 1) * line_height) / 2
+    for index, line in enumerate(vertical_lines):
+        _draw_centered_text(
+            draw,
+            center_x,
+            start_y + index * line_height,
+            line,
+            font,
+            LINE_COLOR,
+        )
 
 
 def _draw_jump_png(draw: ImageDraw.ImageDraw, jump: LineJump) -> None:

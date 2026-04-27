@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
@@ -27,6 +28,22 @@ class RouteHint:
     start_offset: float = 0.0
     end_offset: float = 0.0
     cross_y_offset: float = 0.0
+
+
+@dataclass(slots=True, frozen=True)
+class LabelPlacement:
+    connection_index: int
+    text: str
+    orientation: str
+    anchor_x: float
+    anchor_y: float
+    attach_x: float
+    attach_y: float
+    left: float
+    top: float
+    width: float
+    height: float
+    lines: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -162,6 +179,7 @@ def render_svg(diagram: Diagram) -> str:
     )
 
     line_jumps = _compute_line_jumps(connection_paths)
+    label_placements = _compute_label_placements(diagram, connection_paths, boxes)
 
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(svg_width)}" height="{_fmt(svg_height)}" '
@@ -211,10 +229,11 @@ def render_svg(diagram: Diagram) -> str:
         parts.extend(_draw_jump_svg(jump))
 
     # Draw labels over lines and bumps.
-    for connection, path_points in zip(diagram.connections, connection_paths):
-        if not connection.label:
+    for connection_index in range(len(diagram.connections)):
+        placement = label_placements.get(connection_index)
+        if placement is None:
             continue
-        parts.extend(_draw_connection_label_svg(path_points, connection.label))
+        parts.extend(_draw_connection_label_svg(placement))
 
     # Nodes on top of everything.
     for node in diagram.nodes:
@@ -491,7 +510,14 @@ def _build_connection_paths(
     for index, connection in enumerate(diagram.connections):
         source = boxes[connection.source]
         target = boxes[connection.target]
-        connection_paths.append(_route_connection(source, target, route_hints[index]))
+        connection_paths.append(
+            _route_connection(
+                source,
+                target,
+                route_hints[index],
+                has_label=bool(connection.label),
+            )
+        )
 
     connection_paths = _separate_overlapping_vertical_channels(
         connection_paths, min_line_gap=min_line_gap
@@ -803,6 +829,8 @@ def _route_connection(
     source: NodeBox,
     target: NodeBox,
     hint: RouteHint,
+    *,
+    has_label: bool = False,
 ) -> list[tuple[float, float]]:
     source_offset = _clamp_node_offset(source.height, hint.start_offset)
     target_offset = _clamp_node_offset(target.height, hint.end_offset)
@@ -817,6 +845,12 @@ def _route_connection(
             end = (target.x, target.y + target.height / 2)
 
         if abs(start[0] - end[0]) < 1e-6:
+            if has_label:
+                channel_x = start[0] + _same_lane_label_channel_offset(source, target)
+                return _snap_path_to_grid(
+                    [start, (channel_x, start[1]), (channel_x, end[1]), end],
+                    half=True,
+                )
             return _snap_path_to_grid([start, end], half=True)
 
         channel_x = (start[0] + end[0]) / 2
@@ -855,6 +889,18 @@ def _route_connection(
         [start, (mid_x, start[1]), (mid_x, end[1]), end],
         half=True,
     )
+
+
+def _same_lane_label_channel_offset(source: NodeBox, target: NodeBox) -> float:
+    grid = _grid_size()
+    base_offset = max(
+        grid * 4.0,
+        source.width / 2 + grid,
+        target.width / 2 + grid,
+    )
+    snapped_offset = _snap_to_grid(base_offset, half=True)
+    direction = 1.0 if source.lane_index % 2 == 0 else -1.0
+    return direction * snapped_offset
 
 
 def _clamp_node_offset(node_height: float, offset: float) -> float:
@@ -1169,36 +1215,446 @@ def _draw_jump_svg(jump: LineJump) -> list[str]:
     return fragments
 
 
-def _draw_connection_label_svg(
-    path_points: list[tuple[float, float]], label_text: str
-) -> list[str]:
-    label_x, label_y, orientation = _label_anchor(path_points)
+def _draw_connection_label_svg(placement: LabelPlacement) -> list[str]:
+    center_x = placement.left + placement.width / 2
+    center_y = placement.top + placement.height / 2
+    fragments = [
+        f'  <line x1="{_fmt(placement.anchor_x)}" y1="{_fmt(placement.anchor_y)}" x2="{_fmt(placement.attach_x)}" y2="{_fmt(placement.attach_y)}" stroke="#111827" stroke-width="1.3" stroke-linecap="round" />',
+        f'  <rect x="{_fmt(placement.left)}" y="{_fmt(placement.top)}" width="{_fmt(placement.width)}" height="{_fmt(placement.height)}" fill="#ffffff" fill-opacity="0.94" rx="3" />',
+    ]
 
-    if orientation == "vertical":
-        lines = _vertical_label_lines(label_text)
+    if placement.orientation == "vertical":
         line_height = 12.0
-        label_height = max(28.0, len(lines) * line_height + 10.0)
-        longest = max((len(line) for line in lines), default=1)
-        label_width = max(20.0, min(120.0, longest * 7.2 + 10.0))
-        text_start_y = label_y - ((len(lines) - 1) * line_height) / 2
-
-        fragments = [
-            f'  <rect x="{_fmt(label_x - label_width / 2)}" y="{_fmt(label_y - label_height / 2)}" width="{_fmt(label_width)}" height="{_fmt(label_height)}" fill="#ffffff" fill-opacity="0.92" rx="3" />',
-            f'  <text class="vertical-label" x="{_fmt(label_x)}" y="{_fmt(text_start_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">',
-        ]
-        for index, line in enumerate(lines):
+        text_start_y = center_y - ((len(placement.lines) - 1) * line_height) / 2
+        fragments.append(
+            f'  <text class="vertical-label" x="{_fmt(center_x)}" y="{_fmt(text_start_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">'
+        )
+        for index, line in enumerate(placement.lines):
             dy = "0" if index == 0 else _fmt(line_height)
             fragments.append(
-                f'    <tspan x="{_fmt(label_x)}" dy="{dy}">{escape(line)}</tspan>'
+                f'    <tspan x="{_fmt(center_x)}" dy="{dy}">{escape(line)}</tspan>'
             )
         fragments.append("  </text>")
         return fragments
 
-    label_width = max(34.0, len(label_text) * 7.2 + 12.0)
-    return [
-        f'  <rect x="{_fmt(label_x - label_width / 2)}" y="{_fmt(label_y - 10)}" width="{_fmt(label_width)}" height="20" fill="#ffffff" fill-opacity="0.92" rx="3" />',
-        f'  <text x="{_fmt(label_x)}" y="{_fmt(label_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(label_text)}</text>',
+    text = placement.lines[0] if placement.lines else placement.text
+    fragments.append(
+        f'  <text x="{_fmt(center_x)}" y="{_fmt(center_y)}" text-anchor="middle" dominant-baseline="middle" font-size="12" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(text)}</text>'
+    )
+    return fragments
+
+
+def _compute_label_placements(
+    diagram: Diagram,
+    connection_paths: list[list[tuple[float, float]]],
+    boxes: dict[str, NodeBox],
+) -> dict[int, LabelPlacement]:
+    if not diagram.connections:
+        return {}
+
+    grid = _grid_size()
+    padding = grid
+    segments_by_connection = [
+        _build_segments(path_points, line_index)
+        for line_index, path_points in enumerate(connection_paths)
     ]
+    occupied_regions: list[tuple[float, float, float, float]] = [
+        _node_box_bounds(box) for box in boxes.values()
+    ]
+    placements: dict[int, LabelPlacement] = {}
+
+    candidate_cache: dict[int, list[LabelPlacement]] = {}
+    for connection_index, connection in enumerate(diagram.connections):
+        if not connection.label:
+            continue
+        candidate_cache[connection_index] = _iter_label_candidates(
+            connection_index,
+            connection.label,
+            connection_paths[connection_index],
+            grid,
+        )
+
+    pending = set(candidate_cache)
+    while pending:
+        selected_connection: int | None = None
+        selected_rank: tuple[int, float, int] | None = None
+        selected_placement: LabelPlacement | None = None
+
+        for connection_index in sorted(pending):
+            placement, clear_count, best_score = _select_best_label_candidate(
+                candidate_cache[connection_index],
+                occupied_regions,
+                segments_by_connection,
+                padding,
+            )
+            rank = (clear_count, best_score, connection_index)
+            if selected_rank is None or rank < selected_rank:
+                selected_rank = rank
+                selected_connection = connection_index
+                selected_placement = placement
+
+        if selected_connection is None or selected_placement is None:
+            break
+
+        placements[selected_connection] = selected_placement
+        occupied_regions.append(_label_occupied_bounds(selected_placement, padding))
+        pending.remove(selected_connection)
+
+    return placements
+
+
+def _place_single_label(
+    connection_index: int,
+    label_text: str,
+    path_points: list[tuple[float, float]],
+    occupied_regions: list[tuple[float, float, float, float]],
+    segments_by_connection: list[list[_Segment]],
+    grid: float,
+    padding: float,
+) -> LabelPlacement:
+    candidates = _iter_label_candidates(
+        connection_index,
+        label_text,
+        path_points,
+        grid,
+    )
+    placement, _, _ = _select_best_label_candidate(
+        candidates,
+        occupied_regions,
+        segments_by_connection,
+        padding,
+    )
+    return placement
+
+
+def _iter_label_candidates(
+    connection_index: int,
+    label_text: str,
+    path_points: list[tuple[float, float]],
+    grid: float,
+) -> list[LabelPlacement]:
+    candidates: list[LabelPlacement] = []
+    for segment_start, segment_end, orientation in _label_segments(path_points):
+        lines, label_width, label_height = _measure_label_block(label_text, orientation)
+        anchor_candidates = _candidate_anchor_points(segment_start, segment_end, grid)
+        directions = _preferred_label_directions(orientation)
+
+        for anchor_x, anchor_y in anchor_candidates:
+            for dir_x, dir_y in directions:
+                candidates.append(
+                    _build_label_candidate(
+                        connection_index,
+                        label_text,
+                        orientation,
+                        lines,
+                        label_width,
+                        label_height,
+                        anchor_x,
+                        anchor_y,
+                        dir_x,
+                        dir_y,
+                        grid,
+                    )
+                )
+
+    if candidates:
+        return candidates
+
+    segment_start, segment_end, orientation = _label_segment(path_points)
+    lines, label_width, label_height = _measure_label_block(label_text, orientation)
+    return [
+        _build_label_candidate(
+            connection_index,
+            label_text,
+            orientation,
+            lines,
+            label_width,
+            label_height,
+            (segment_start[0] + segment_end[0]) / 2,
+            (segment_start[1] + segment_end[1]) / 2,
+            1,
+            -1,
+            grid,
+        )
+    ]
+
+
+def _select_best_label_candidate(
+    candidates: list[LabelPlacement],
+    occupied_regions: list[tuple[float, float, float, float]],
+    segments_by_connection: list[list[_Segment]],
+    padding: float,
+) -> tuple[LabelPlacement, int, float]:
+    best_candidate = candidates[0]
+    best_score = float("inf")
+    first_clear_candidate: LabelPlacement | None = None
+    clear_count = 0
+
+    for candidate in candidates:
+        region_overlap = _overlap_score(candidate, occupied_regions, padding)
+        line_overlap = _foreign_line_overlap_score(
+            candidate,
+            segments_by_connection,
+            padding,
+        )
+        score = region_overlap * 10000.0 + line_overlap
+
+        if score < best_score:
+            best_score = score
+            best_candidate = candidate
+
+        if region_overlap <= 0.0 and line_overlap <= 0.0:
+            clear_count += 1
+            if first_clear_candidate is None:
+                first_clear_candidate = candidate
+
+    if first_clear_candidate is not None:
+        return first_clear_candidate, clear_count, 0.0
+
+    return best_candidate, clear_count, best_score
+
+
+def _foreign_line_overlap_score(
+    candidate: LabelPlacement,
+    segments_by_connection: list[list[_Segment]],
+    padding: float,
+) -> float:
+    occupied = _label_occupied_bounds(candidate, padding)
+    total_overlap = 0.0
+    for segments in segments_by_connection:
+        for segment in segments:
+            if segment.line_index == candidate.connection_index:
+                continue
+            total_overlap += _segment_rect_overlap(segment, occupied)
+    return total_overlap
+
+
+def _segment_rect_overlap(
+    segment: _Segment,
+    rect: tuple[float, float, float, float],
+) -> float:
+    left, top, right, bottom = rect
+    if segment.orientation == "horizontal":
+        if not (top <= segment.y1 <= bottom):
+            return 0.0
+        return _range_overlap(segment.x1, segment.x2, left, right)
+
+    if not (left <= segment.x1 <= right):
+        return 0.0
+    return _range_overlap(segment.y1, segment.y2, top, bottom)
+
+
+def _label_segment(
+    path_points: list[tuple[float, float]],
+) -> tuple[tuple[float, float], tuple[float, float], str]:
+    return _label_segments(path_points)[0]
+
+
+def _label_segments(
+    path_points: list[tuple[float, float]],
+) -> list[tuple[tuple[float, float], tuple[float, float], str]]:
+    if len(path_points) < 2:
+        single = path_points[0]
+        return [(single, single, "horizontal")]
+
+    xs = [point[0] for point in path_points]
+    ys = [point[1] for point in path_points]
+    center_x = (min(xs) + max(xs)) / 2
+    center_y = (min(ys) + max(ys)) / 2
+
+    ranked: list[
+        tuple[
+            float,
+            float,
+            tuple[float, float],
+            tuple[float, float],
+            str,
+        ]
+    ] = []
+    for index in range(len(path_points) - 1):
+        start = path_points[index]
+        end = path_points[index + 1]
+        dx = abs(end[0] - start[0])
+        dy = abs(end[1] - start[1])
+
+        if dx < 1e-6 and dy < 1e-6:
+            continue
+        if dx < 1e-6:
+            orientation = "vertical"
+            length = dy
+        elif dy < 1e-6:
+            orientation = "horizontal"
+            length = dx
+        else:
+            continue
+
+        mid_x = (start[0] + end[0]) / 2
+        mid_y = (start[1] + end[1]) / 2
+        center_distance = abs(mid_x - center_x) + abs(mid_y - center_y)
+        ranked.append((center_distance, -length, start, end, orientation))
+
+    if not ranked:
+        start = path_points[0]
+        end = path_points[-1]
+        orientation = (
+            "vertical"
+            if abs(end[0] - start[0]) < abs(end[1] - start[1])
+            else "horizontal"
+        )
+        return [(start, end, orientation)]
+
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [(start, end, orientation) for _, _, start, end, orientation in ranked]
+
+
+def _measure_label_block(
+    label_text: str, orientation: str
+) -> tuple[tuple[str, ...], float, float]:
+    if orientation == "vertical":
+        lines = tuple(_vertical_label_lines(label_text))
+        line_height = 12.0
+        label_height = _snap_to_grid(max(28.0, len(lines) * line_height + 10.0))
+        longest = max((len(line) for line in lines), default=1)
+        label_width = _snap_to_grid(max(20.0, min(120.0, longest * 7.2 + 10.0)))
+        return lines, label_width, label_height
+
+    text = label_text.strip() or "?"
+    lines = (text,)
+    label_width = _snap_to_grid(max(34.0, len(text) * 7.2 + 12.0))
+    label_height = _snap_to_grid(20.0)
+    return lines, label_width, label_height
+
+
+def _candidate_anchor_points(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    grid: float,
+) -> list[tuple[float, float]]:
+    if abs(start[0] - end[0]) < 1e-6:
+        x = start[0]
+        y_candidates = _axis_candidate_values(start[1], end[1], grid)
+        return [(x, y) for y in y_candidates]
+
+    y = start[1]
+    x_candidates = _axis_candidate_values(start[0], end[0], grid)
+    return [(x, y) for x in x_candidates]
+
+
+def _axis_candidate_values(start: float, end: float, grid: float) -> list[float]:
+    lower = min(start, end)
+    upper = max(start, end)
+    center = (lower + upper) / 2
+
+    if upper - lower < 1e-6:
+        return [center]
+
+    first_k = math.ceil(lower / grid)
+    last_k = math.floor(upper / grid)
+    candidates = [k * grid for k in range(first_k, last_k + 1)]
+
+    if not candidates:
+        snapped_center = _snap_to_grid(center)
+        clamped = max(lower, min(upper, snapped_center))
+        return [clamped]
+
+    candidates.sort(key=lambda value: (abs(value - center), value))
+    return candidates
+
+
+def _preferred_label_directions(orientation: str) -> list[tuple[int, int]]:
+    if orientation == "vertical":
+        return [(1, -1), (-1, -1), (1, 1), (-1, 1)]
+    return [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+
+
+def _build_label_candidate(
+    connection_index: int,
+    label_text: str,
+    orientation: str,
+    lines: tuple[str, ...],
+    label_width: float,
+    label_height: float,
+    anchor_x: float,
+    anchor_y: float,
+    dir_x: int,
+    dir_y: int,
+    grid: float,
+) -> LabelPlacement:
+    attach_x = anchor_x + dir_x * grid
+    attach_y = anchor_y + dir_y * grid
+
+    left = attach_x if dir_x > 0 else attach_x - label_width
+    top = attach_y if dir_y > 0 else attach_y - label_height
+
+    return LabelPlacement(
+        connection_index=connection_index,
+        text=label_text,
+        orientation=orientation,
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        attach_x=attach_x,
+        attach_y=attach_y,
+        left=left,
+        top=top,
+        width=label_width,
+        height=label_height,
+        lines=lines,
+    )
+
+
+def _node_box_bounds(box: NodeBox) -> tuple[float, float, float, float]:
+    half_width = box.width / 2
+    half_height = box.height / 2
+    return (
+        box.x - half_width,
+        box.y - half_height,
+        box.x + half_width,
+        box.y + half_height,
+    )
+
+
+def _label_occupied_bounds(
+    placement: LabelPlacement,
+    padding: float,
+) -> tuple[float, float, float, float]:
+    left = min(placement.left, placement.anchor_x, placement.attach_x) - padding
+    top = min(placement.top, placement.anchor_y, placement.attach_y) - padding
+    right = max(
+        placement.left + placement.width,
+        placement.anchor_x,
+        placement.attach_x,
+    ) + padding
+    bottom = max(
+        placement.top + placement.height,
+        placement.anchor_y,
+        placement.attach_y,
+    ) + padding
+    return left, top, right, bottom
+
+
+def _overlap_score(
+    candidate: LabelPlacement,
+    occupied_regions: list[tuple[float, float, float, float]],
+    padding: float,
+) -> float:
+    candidate_region = _label_occupied_bounds(candidate, padding)
+    total_overlap = 0.0
+    for occupied in occupied_regions:
+        total_overlap += _rect_overlap_area(candidate_region, occupied)
+    return total_overlap
+
+
+def _rect_overlap_area(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    if right <= left or bottom <= top:
+        return 0.0
+    return (right - left) * (bottom - top)
 
 
 def _vertical_label_lines(label_text: str) -> list[str]:
@@ -1517,18 +1973,9 @@ def _topological_order(
 
 
 def _label_anchor(path_points: list[tuple[float, float]]) -> tuple[float, float, str]:
-    if len(path_points) >= 4:
-        start = path_points[1]
-        end = path_points[2]
-    else:
-        start = path_points[0]
-        end = path_points[-1]
-
+    start, end, orientation = _label_segment(path_points)
     x = (start[0] + end[0]) / 2
     y = (start[1] + end[1]) / 2
-    orientation = (
-        "vertical" if abs(end[0] - start[0]) < abs(end[1] - start[1]) else "horizontal"
-    )
     if orientation == "horizontal":
         y -= 4.0
     return x, y, orientation

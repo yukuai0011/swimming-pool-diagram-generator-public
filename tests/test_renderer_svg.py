@@ -1,10 +1,13 @@
 import unittest
+from itertools import combinations
 
 from swimlane_diagram_generator.parser import parse_diagram
 from swimlane_diagram_generator.renderer_svg import (
     _assign_vertical_slots,
     _build_boxes,
     _build_connection_paths,
+    _build_segments,
+    _compute_label_placements,
     _compute_lane_width,
     _compute_line_jumps,
     _compute_node_dimensions,
@@ -147,6 +150,55 @@ connect s8 --> target
 connect s9 --> target
 connect s10 --> target
 connect s11 --> target
+"""
+
+LABEL_PACKING_DSL = """swimlaneDiagram
+title Label Packing
+
+lane left "Left"
+lane right "Right"
+
+node l1 in left process "L1"
+node l2 in left process "L2"
+node l3 in left process "L3"
+node r1 in right process "R1"
+node r2 in right process "R2"
+node r3 in right process "R3"
+
+connect l1 -->|alpha| r1
+connect l1 -->|beta| r2
+connect l2 -->|gamma| r2
+connect l2 -->|delta| r3
+connect l3 -->|epsilon| r3
+connect r3 -->|zeta| l2
+"""
+
+OVERLAP_STRESS_DSL = """swimlaneDiagram
+title Vertical Line Crossed by Multiple Horizontal Lines Test
+
+lane left "Left Lane"
+lane center "Center Lane"
+lane right "Right Lane"
+
+node top in center [start/end] "Top"
+node mid1 in left process "Mid Left 1"
+node mid2 in left process "Mid Left 2"
+node mid3 in left process "Mid Left 3"
+node mid4 in right process "Mid Right 1"
+node mid5 in right process "Mid Right 2"
+node mid6 in right process "Mid Right 3"
+node bottom in center [start/end] "Bottom"
+node extra1 in right process "Extra R1"
+node extra2 in left process "Extra L1"
+node extra3 in right process "Extra R2"
+node extra4 in left process "Extra L2"
+
+connect top --> bottom : Vertical Flow
+connect mid1 --> mid4 : Horizontal A
+connect mid2 --> mid5 : Horizontal B
+connect mid3 --> mid6 : Horizontal C
+connect extra1 --> extra2 : Reverse Flow 1
+connect extra3 --> extra4 : Reverse Flow 2
 """
 
 
@@ -384,6 +436,287 @@ class SvgRendererTests(unittest.TestCase):
         finally:
             set_global_min_line_gap(original_gap)
 
+    def test_label_placements_do_not_overlap_with_padding(self) -> None:
+        diagram = parse_diagram(LABEL_PACKING_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        placements = _compute_label_placements(diagram, paths, boxes)
+        self.assertEqual(
+            len(placements),
+            sum(1 for connection in diagram.connections if connection.label),
+        )
+
+        padding = get_global_min_line_gap()
+        for first, second in combinations(placements.values(), 2):
+            first_rect = _expand_rect(
+                first.left,
+                first.top,
+                first.left + first.width,
+                first.top + first.height,
+                padding,
+            )
+            second_rect = _expand_rect(
+                second.left,
+                second.top,
+                second.left + second.width,
+                second.top + second.height,
+                padding,
+            )
+            self.assertFalse(_rects_overlap(first_rect, second_rect))
+
+    def test_label_leader_is_one_grid_diagonal(self) -> None:
+        diagram = parse_diagram(LABEL_PACKING_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        placements = _compute_label_placements(diagram, paths, boxes)
+        step = get_global_min_line_gap()
+        for placement in placements.values():
+            self.assertAlmostEqual(
+                abs(placement.attach_x - placement.anchor_x), step, places=5
+            )
+            self.assertAlmostEqual(
+                abs(placement.attach_y - placement.anchor_y), step, places=5
+            )
+
+            path = paths[placement.connection_index]
+            self.assertTrue(_point_on_polyline(path, placement.anchor_x, placement.anchor_y))
+
+    def test_label_padding_area_avoids_foreign_lines(self) -> None:
+        diagram = parse_diagram(OVERLAP_STRESS_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        placements = _compute_label_placements(diagram, paths, boxes)
+        labels = {placement.text: placement for placement in placements.values()}
+        self.assertIn("Reverse Flow 1", labels)
+        self.assertIn("Horizontal A", labels)
+
+        padding = get_global_min_line_gap()
+        for placement in placements.values():
+            collisions = _foreign_line_collisions(placement, paths, padding)
+            self.assertFalse(
+                collisions,
+                f"label '{placement.text}' overlaps foreign connector segments: {collisions}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _expand_rect(
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    padding: float,
+) -> tuple[float, float, float, float]:
+    return left - padding, top - padding, right + padding, bottom + padding
+
+
+def _rects_overlap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> bool:
+    left_1, top_1, right_1, bottom_1 = first
+    left_2, top_2, right_2, bottom_2 = second
+    return not (
+        right_1 <= left_2
+        or right_2 <= left_1
+        or bottom_1 <= top_2
+        or bottom_2 <= top_1
+    )
+
+
+def _point_on_polyline(path: list[tuple[float, float]], x: float, y: float) -> bool:
+    for index in range(len(path) - 1):
+        x1, y1 = path[index]
+        x2, y2 = path[index + 1]
+        if abs(x1 - x2) < 1e-6:
+            if abs(x - x1) < 1e-6 and min(y1, y2) - 1e-6 <= y <= max(y1, y2) + 1e-6:
+                return True
+        elif abs(y1 - y2) < 1e-6:
+            if abs(y - y1) < 1e-6 and min(x1, x2) - 1e-6 <= x <= max(x1, x2) + 1e-6:
+                return True
+    return False
+
+
+def _foreign_line_collisions(
+    placement,
+    connection_paths: list[list[tuple[float, float]]],
+    padding: float,
+) -> list[tuple[int, tuple[float, float, float, float]]]:
+    rect = _placement_occupied_rect(placement, padding)
+
+    collisions: list[tuple[int, tuple[float, float, float, float]]] = []
+    for line_index, path in enumerate(connection_paths):
+        if line_index == placement.connection_index:
+            continue
+        for segment in _build_segments(path, line_index):
+            if not _segment_collides_with_rect(segment, rect):
+                continue
+            collisions.append(
+                (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
+            )
+    return collisions
+
+
+def _placement_occupied_rect(
+    placement,
+    padding: float,
+) -> tuple[float, float, float, float]:
+    left = min(placement.left, placement.anchor_x, placement.attach_x) - padding
+    top = min(placement.top, placement.anchor_y, placement.attach_y) - padding
+    right = max(
+        placement.left + placement.width,
+        placement.anchor_x,
+        placement.attach_x,
+    ) + padding
+    bottom = max(
+        placement.top + placement.height,
+        placement.anchor_y,
+        placement.attach_y,
+    ) + padding
+    return left, top, right, bottom
+
+
+def _segment_collides_with_rect(
+    segment,
+    rect: tuple[float, float, float, float],
+) -> bool:
+    left, top, right, bottom = rect
+    if segment.orientation == "horizontal":
+        if not (top <= segment.y1 <= bottom):
+            return False
+        return _ranges_overlap(
+            min(segment.x1, segment.x2),
+            max(segment.x1, segment.x2),
+            left,
+            right,
+        )
+
+    if not (left <= segment.x1 <= right):
+        return False
+    return _ranges_overlap(
+        min(segment.y1, segment.y2),
+        max(segment.y1, segment.y2),
+        top,
+        bottom,
+    )
+
+
+def _ranges_overlap(a1: float, a2: float, b1: float, b2: float) -> bool:
+    return max(a1, b1) < min(a2, b2)
