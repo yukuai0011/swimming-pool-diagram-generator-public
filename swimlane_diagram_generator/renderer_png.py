@@ -147,20 +147,41 @@ def render_png_bytes(diagram: Diagram) -> bytes:
             LINE_COLOR,
         )
 
-    # Lane headers and bodies
+    # Lane header band across full width (no outline)
+    header_y = chart_y + title_height
+    _draw_rect(
+        draw,
+        chart_x,
+        header_y,
+        chart_width,
+        lane_header_height,
+        fill=LANE_HEADER,
+        outline=None,
+    )
+    # Lane body band across full width (no outline)
+    _draw_rect(
+        draw,
+        chart_x,
+        lane_body_y,
+        chart_width,
+        body_height,
+        fill=LANE_BODY,
+        outline=None,
+    )
+    # Solid line between header and body
+    _draw_line(
+        draw,
+        chart_x,
+        lane_body_y,
+        chart_x + chart_width,
+        lane_body_y,
+        LINE_COLOR,
+        1,
+    )
+
+    # Lane titles
     for lane in diagram.lanes:
         lane_x = chart_x + lane.index * lane_width
-        header_y = chart_y + title_height
-        _draw_rect(
-            draw,
-            lane_x,
-            header_y,
-            lane_width,
-            lane_header_height,
-            fill=LANE_HEADER,
-            outline=LINE_COLOR,
-            stroke_width=1,
-        )
         _draw_centered_text(
             draw,
             lane_x + lane_width / 2,
@@ -169,15 +190,21 @@ def render_png_bytes(diagram: Diagram) -> bytes:
             _load_font(14),
             LINE_COLOR,
         )
-        _draw_rect(
+
+    # Dotted internal lane separators
+    separator_dash = max(3.0, grid_size * 0.6)
+    separator_gap = max(3.0, grid_size * 0.4)
+    for index in range(1, lane_count):
+        x = chart_x + index * lane_width
+        _draw_dotted_vertical_line(
             draw,
-            lane_x,
-            lane_body_y,
-            lane_width,
-            body_height,
-            fill=LANE_BODY,
-            outline=LINE_COLOR,
-            stroke_width=1,
+            x,
+            chart_y + title_height,
+            lane_body_y + body_height,
+            dash=separator_dash,
+            gap=separator_gap,
+            color=LINE_COLOR,
+            width=1,
         )
 
     # Connection lines
@@ -219,15 +246,53 @@ def _draw_rect(
     rect_height: float,
     *,
     fill: str,
-    outline: str,
+    outline: str | None,
     stroke_width: int = 1,
 ) -> None:
-    draw.rectangle(
-        [x, y, x + rect_width, y + rect_height],
-        fill=fill,
-        outline=outline,
-        width=stroke_width,
-    )
+    if outline is None:
+        draw.rectangle(
+            [x, y, x + rect_width, y + rect_height],
+            fill=fill,
+            outline=None,
+        )
+    else:
+        draw.rectangle(
+            [x, y, x + rect_width, y + rect_height],
+            fill=fill,
+            outline=outline,
+            width=stroke_width,
+        )
+
+
+def _draw_line(
+    draw: ImageDraw.ImageDraw,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    color: str,
+    width: int,
+) -> None:
+    draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
+
+
+def _draw_dotted_vertical_line(
+    draw: ImageDraw.ImageDraw,
+    x: float,
+    y1: float,
+    y2: float,
+    *,
+    dash: float,
+    gap: float,
+    color: str,
+    width: int,
+) -> None:
+    current = min(y1, y2)
+    end = max(y1, y2)
+    while current < end:
+        segment_end = min(current + dash, end)
+        draw.line([(x, current), (x, segment_end)], fill=color, width=width)
+        current = segment_end + gap
 
 
 def _draw_centered_text(
