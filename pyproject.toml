@@ -5,6 +5,8 @@ description = "Generate vertical swimlane diagrams from a Mermaid-like DSL"
 readme = "README.md"
 requires-python = ">=3.11, <3.12"
 dependencies = [
+	"svglib>=0.19.0",
+	"reportlab>=4.0.0",
 	"pillow>=10.4.0",
 ]
 
