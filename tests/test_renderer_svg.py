@@ -612,6 +612,79 @@ class SvgRendererTests(unittest.TestCase):
                 f"label '{placement.text}' overlaps foreign connector segments: {collisions}",
             )
 
+    def test_label_padding_avoids_all_lines_except_anchor(self) -> None:
+        diagram = parse_diagram(OVERLAP_STRESS_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        placements = _compute_label_placements(diagram, paths, boxes)
+
+        padding = get_global_min_line_gap()
+        for placement in placements.values():
+            rect = _placement_occupied_rect(placement, padding)
+            collisions = []
+            for line_index, path in enumerate(paths):
+                for segment in _build_segments(path, line_index):
+                    overlap = _segment_overlap_length(segment, rect)
+                    if overlap <= 0.0:
+                        continue
+                    if line_index == placement.connection_index and _anchor_on_segment(
+                        placement.anchor_x, placement.anchor_y, segment
+                    ) and overlap <= 1e-6:
+                        continue
+                    collisions.append(
+                        (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
+                    )
+            self.assertFalse(
+                collisions,
+                f"label '{placement.text}' padding overlaps connector segments: {collisions}",
+            )
+
+    def test_internal_lane_separators_are_dotted(self) -> None:
+        diagram = parse_diagram(RENDER_DSL)
+        svg = render_svg(diagram)
+
+        self.assertIn('class="lane-separator"', svg)
+        self.assertIn('stroke-dasharray', svg)
+
+        # The outer border should remain solid (no dash array on the first chart rect)
+        outer_rect = svg.split('\n')[3]
+        self.assertNotIn('stroke-dasharray', outer_rect)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -720,3 +793,33 @@ def _segment_collides_with_rect(
 
 def _ranges_overlap(a1: float, a2: float, b1: float, b2: float) -> bool:
     return max(a1, b1) < min(a2, b2)
+
+
+def _segment_overlap_length(
+    segment,
+    rect: tuple[float, float, float, float],
+) -> float:
+    left, top, right, bottom = rect
+    if segment.orientation == "horizontal":
+        if not (top <= segment.y1 <= bottom):
+            return 0.0
+        low = max(min(segment.x1, segment.x2), left)
+        high = min(max(segment.x1, segment.x2), right)
+        return max(0.0, high - low)
+
+    if not (left <= segment.x1 <= right):
+        return 0.0
+    low = max(min(segment.y1, segment.y2), top)
+    high = min(max(segment.y1, segment.y2), bottom)
+    return max(0.0, high - low)
+
+
+def _anchor_on_segment(anchor_x: float, anchor_y: float, segment) -> bool:
+    if segment.orientation == "horizontal":
+        if abs(anchor_y - segment.y1) > 1e-6:
+            return False
+        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
+
+    if abs(anchor_x - segment.x1) > 1e-6:
+        return False
+    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6
