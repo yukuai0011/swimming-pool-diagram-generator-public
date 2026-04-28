@@ -202,19 +202,37 @@ def render_svg(diagram: Diagram) -> str:
             f'font-size="22" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(diagram.title)}</text>'
         )
 
-    # Lane headers and lane body backgrounds
+    # Lane header band across full width (no stroke)
+    header_y = chart_y + title_height
+    parts.append(
+        f'  <rect x="{_fmt(chart_x)}" y="{_fmt(header_y)}" width="{_fmt(chart_width)}" height="{_fmt(lane_header_height)}" fill="#f3f4f6" stroke="none" />'
+    )
+    # Lane body band across full width (no stroke)
+    parts.append(
+        f'  <rect x="{_fmt(chart_x)}" y="{_fmt(lane_body_y)}" width="{_fmt(chart_width)}" height="{_fmt(body_height)}" fill="#f8f8f8" stroke="none" />'
+    )
+    # Solid line between header and body
+    parts.append(
+        f'  <line x1="{_fmt(chart_x)}" y1="{_fmt(lane_body_y)}" x2="{_fmt(chart_x + chart_width)}" y2="{_fmt(lane_body_y)}" stroke="#111827" stroke-width="1.0" />'
+    )
+
+    # Lane titles (per lane)
     for lane in diagram.lanes:
         lane_x = chart_x + lane.index * lane_width
-        header_y = chart_y + title_height
-        parts.append(
-            f'  <rect x="{_fmt(lane_x)}" y="{_fmt(header_y)}" width="{_fmt(lane_width)}" height="{_fmt(lane_header_height)}" fill="#f3f4f6" stroke="#111827" stroke-width="1.0" />'
-        )
         parts.append(
             f'  <text x="{_fmt(lane_x + lane_width / 2)}" y="{_fmt(header_y + lane_header_height / 2 + 5)}" text-anchor="middle" '
             f'font-size="14" font-family="Segoe UI, Microsoft YaHei, Arial, sans-serif" fill="#111827">{escape(lane.title)}</text>'
         )
+
+    # Dotted internal lane separators
+    separator_dash = _fmt(max(3.0, grid_size * 0.6))
+    separator_gap = _fmt(max(3.0, grid_size * 0.4))
+    for index in range(1, lane_count):
+        x = chart_x + index * lane_width
         parts.append(
-            f'  <rect x="{_fmt(lane_x)}" y="{_fmt(lane_body_y)}" width="{_fmt(lane_width)}" height="{_fmt(body_height)}" fill="#f8f8f8" stroke="#111827" stroke-width="1.0" />'
+            f'  <line class="lane-separator" x1="{_fmt(x)}" y1="{_fmt(chart_y + title_height)}" '
+            f'x2="{_fmt(x)}" y2="{_fmt(lane_body_y + body_height)}" '
+            f'stroke="#111827" stroke-width="1.0" stroke-dasharray="{separator_dash},{separator_gap}" />'
         )
 
     # Connection lines first.
