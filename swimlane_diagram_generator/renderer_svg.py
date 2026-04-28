@@ -1423,9 +1423,16 @@ def _foreign_line_overlap_score(
     total_overlap = 0.0
     for segments in segments_by_connection:
         for segment in segments:
-            if segment.line_index == candidate.connection_index:
+            overlap = _segment_rect_overlap(segment, occupied)
+            if overlap <= 0.0:
                 continue
-            total_overlap += _segment_rect_overlap(segment, occupied)
+            if segment.line_index == candidate.connection_index and _anchor_on_segment(
+                candidate.anchor_x,
+                candidate.anchor_y,
+                segment,
+            ):
+                continue
+            total_overlap += overlap
     return total_overlap
 
 
@@ -1442,6 +1449,17 @@ def _segment_rect_overlap(
     if not (left <= segment.x1 <= right):
         return 0.0
     return _range_overlap(segment.y1, segment.y2, top, bottom)
+
+
+def _anchor_on_segment(anchor_x: float, anchor_y: float, segment: _Segment) -> bool:
+    if segment.orientation == "horizontal":
+        if abs(anchor_y - segment.y1) > 1e-6:
+            return False
+        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
+
+    if abs(anchor_x - segment.x1) > 1e-6:
+        return False
+    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6
 
 
 def _label_segment(

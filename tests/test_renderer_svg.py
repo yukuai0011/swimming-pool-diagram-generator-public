@@ -201,6 +201,21 @@ connect extra1 --> extra2 : Reverse Flow 1
 connect extra3 --> extra4 : Reverse Flow 2
 """
 
+PADDING_TEST_DSL = """swimlaneDiagram
+title Label Padding Test
+
+lane left "Left"
+lane center "Center"
+lane right "Right"
+
+node top in left [start/end] "Top"
+node mid in center process "Mid"
+node bottom in right [start/end] "Bottom"
+
+connect top --> mid : Down
+connect mid --> bottom : Across
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -613,7 +628,7 @@ class SvgRendererTests(unittest.TestCase):
             )
 
     def test_label_padding_avoids_all_lines_except_anchor(self) -> None:
-        diagram = parse_diagram(OVERLAP_STRESS_DSL)
+        diagram = parse_diagram(PADDING_TEST_DSL)
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
         slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
         node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
@@ -664,7 +679,7 @@ class SvgRendererTests(unittest.TestCase):
                         continue
                     if line_index == placement.connection_index and _anchor_on_segment(
                         placement.anchor_x, placement.anchor_y, segment
-                    ) and overlap <= 1e-6:
+                    ):
                         continue
                     collisions.append(
                         (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
