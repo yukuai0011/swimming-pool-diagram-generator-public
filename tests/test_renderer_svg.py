@@ -3,6 +3,7 @@ from itertools import combinations
 
 from swimlane_diagram_generator.parser import parse_diagram
 from swimlane_diagram_generator.renderer_svg import (
+    Shape,
     _assign_vertical_slots,
     _build_boxes,
     _build_connection_paths,
@@ -699,6 +700,22 @@ class SvgRendererTests(unittest.TestCase):
         # The outer border should remain solid (no dash array on the first chart rect)
         outer_rect = svg.split('\n')[3]
         self.assertNotIn('stroke-dasharray', outer_rect)
+
+    def test_node_text_padding_grows_small_nodes(self):
+        """Nodes with short CJK text should be larger than the bare minimum."""
+        from swimlane_diagram_generator.renderer_svg import NODE_TEXT_PAD_H, NODE_TEXT_PAD_V
+        self.assertGreater(NODE_TEXT_PAD_H, 0.0)
+        self.assertGreater(NODE_TEXT_PAD_V, 0.0)
+
+        diagram = parse_diagram('swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n')
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+        w, h = dimensions["n1"]
+        # Without padding, the 4-char CJK text "执行维修" fits in (60, 36).
+        # With NODE_TEXT_PAD_H/V, the node should grow beyond that.
+        self.assertGreater(w, 60.0, "padding should increase node width beyond unpadded size")
+        self.assertGreater(h, 36.0, "padding should increase node height beyond unpadded size")
 
 
 if __name__ == "__main__":

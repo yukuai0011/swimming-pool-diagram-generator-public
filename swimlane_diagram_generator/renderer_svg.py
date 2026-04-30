@@ -72,6 +72,9 @@ class RenderGlobalConfig:
 
 GLOBAL_RENDER_CONFIG = RenderGlobalConfig()
 
+NODE_TEXT_PAD_H = 8.0
+NODE_TEXT_PAD_V = 6.0
+
 
 def set_global_min_line_gap(min_line_gap: float) -> None:
     GLOBAL_RENDER_CONFIG.min_line_gap = max(4.0, float(min_line_gap))
@@ -1721,7 +1724,7 @@ def _text_capacity(box: NodeBox) -> int:
 def _text_capacity_for_dimensions(shape: Shape, width: float) -> int:
     width_factor, _ = _shape_text_box_factors(shape)
     width *= width_factor
-    width = max(48.0, width - 20.0)
+    width = max(48.0, width - 20.0 - NODE_TEXT_PAD_H * 2)
     return max(4, int(width / 7.2))
 
 
@@ -1837,7 +1840,7 @@ def _fit_text_in_grid_units(
     grid_size: float,
 ) -> tuple[int, int]:
     text_width_factor, text_height_factor = _shape_text_box_factors(shape)
-    text_width_raw = _estimate_text_width(text, 13) + 8.0
+    text_width_raw = _estimate_text_width(text, 13) + 8.0 + NODE_TEXT_PAD_H * 2
 
     for _ in range(20):
         width = width_units * grid_size
@@ -1846,7 +1849,7 @@ def _fit_text_in_grid_units(
         text_box_width = max(24.0, width * text_width_factor - grid_size * 0.5)
         max_chars = max(4, int(text_box_width / 7.2))
         wrapped_lines = _wrap_text(text, max_chars)
-        required_text_height = len(wrapped_lines) * 15.0 + 10.0
+        required_text_height = len(wrapped_lines) * 15.0 + 10.0 + NODE_TEXT_PAD_V * 2
         available_text_height = max(14.0, height * text_height_factor - grid_size * 0.2)
 
         if required_text_height > available_text_height:
