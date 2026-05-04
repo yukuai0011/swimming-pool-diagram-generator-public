@@ -536,7 +536,6 @@ def _build_connection_paths(
                 source,
                 target,
                 route_hints[index],
-                has_label=bool(connection.label),
             )
         )
 
@@ -549,6 +548,19 @@ def _build_connection_paths(
     connection_paths = _separate_overlapping_vertical_channels(
         connection_paths, min_line_gap=min_line_gap
     )
+    connection_paths, rerouted_for_labels = (
+        _reroute_conflicting_same_lane_label_paths(diagram, boxes, connection_paths)
+    )
+    if rerouted_for_labels:
+        connection_paths = _separate_overlapping_vertical_channels(
+            connection_paths, min_line_gap=min_line_gap
+        )
+        connection_paths = _separate_overlapping_horizontal_channels(
+            connection_paths, min_line_gap=min_line_gap
+        )
+        connection_paths = _separate_overlapping_vertical_channels(
+            connection_paths, min_line_gap=min_line_gap
+        )
     if lane_borders_x:
         connection_paths = _nudge_paths_off_lane_borders(
             connection_paths, lane_borders_x
@@ -850,38 +862,21 @@ def _route_connection(
     source: NodeBox,
     target: NodeBox,
     hint: RouteHint,
-    *,
-    has_label: bool = False,
 ) -> list[tuple[float, float]]:
     source_offset = _clamp_node_offset(source.height, hint.start_offset)
     target_offset = _clamp_node_offset(target.height, hint.end_offset)
 
     if source.lane_index == target.lane_index:
-        is_downward = target.y >= source.y
-        if is_downward:
-            start = (source.x, source.y + source.height / 2)
-            end = (target.x, target.y - target.height / 2)
-        else:
-            start = (source.x, source.y - source.height / 2)
-            end = (target.x, target.y + target.height / 2)
+        start, end, is_downward = _same_lane_ports(source, target)
 
         if abs(start[0] - end[0]) < 1e-6:
-            if has_label:
-                channel_x = start[0] + _same_lane_label_channel_offset(source, target)
-                return _snap_path_to_grid(
-                    [start, (channel_x, start[1]), (channel_x, end[1]), end],
-                    half=True,
-                )
             return _snap_path_to_grid([start, end], half=True)
 
         channel_x = (start[0] + end[0]) / 2
         if abs(channel_x - start[0]) < 1e-6 and abs(channel_x - end[0]) < 1e-6:
             return _snap_path_to_grid([start, end], half=True)
 
-        return _snap_path_to_grid(
-            [start, (channel_x, start[1]), (channel_x, end[1]), end],
-            half=True,
-        )
+        return _same_lane_channel_path(start, end, channel_x, is_downward)
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
     cross_y_offset = _clamp_node_offset(
@@ -912,6 +907,56 @@ def _route_connection(
     )
 
 
+def _same_lane_ports(
+    source: NodeBox,
+    target: NodeBox,
+) -> tuple[tuple[float, float], tuple[float, float], bool]:
+    is_downward = target.y >= source.y
+    if is_downward:
+        return (
+            (source.x, source.y + source.height / 2),
+            (target.x, target.y - target.height / 2),
+            is_downward,
+        )
+
+    return (
+        (source.x, source.y - source.height / 2),
+        (target.x, target.y + target.height / 2),
+        is_downward,
+    )
+
+
+def _same_lane_channel_path(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    channel_x: float,
+    is_downward: bool,
+) -> list[tuple[float, float]]:
+    stub = _snap_to_grid(max(12.0, _grid_size()), half=True)
+    start_stub_y = start[1] + stub if is_downward else start[1] - stub
+    end_stub_y = end[1] - stub if is_downward else end[1] + stub
+    return _snap_path_to_grid(
+        [
+            start,
+            (start[0], start_stub_y),
+            (channel_x, start_stub_y),
+            (channel_x, end_stub_y),
+            (end[0], end_stub_y),
+            end,
+        ],
+        half=True,
+    )
+
+
+def _same_lane_label_channel_path(
+    source: NodeBox,
+    target: NodeBox,
+) -> list[tuple[float, float]]:
+    start, end, is_downward = _same_lane_ports(source, target)
+    channel_x = start[0] + _same_lane_label_channel_offset(source, target)
+    return _same_lane_channel_path(start, end, channel_x, is_downward)
+
+
 def _same_lane_label_channel_offset(source: NodeBox, target: NodeBox) -> float:
     grid = _grid_size()
     base_offset = max(
@@ -927,6 +972,76 @@ def _same_lane_label_channel_offset(source: NodeBox, target: NodeBox) -> float:
 def _clamp_node_offset(node_height: float, offset: float) -> float:
     limit = max(8.0, node_height / 2 - 6.0)
     return max(-limit, min(limit, offset))
+
+
+def _reroute_conflicting_same_lane_label_paths(
+    diagram: Diagram,
+    boxes: dict[str, NodeBox],
+    connection_paths: list[list[tuple[float, float]]],
+) -> tuple[list[list[tuple[float, float]]], bool]:
+    adjusted_paths = [list(path) for path in connection_paths]
+    rerouted = False
+
+    for connection_index, connection in enumerate(diagram.connections):
+        if not connection.label:
+            continue
+
+        source = boxes[connection.source]
+        target = boxes[connection.target]
+        if source.lane_index != target.lane_index:
+            continue
+
+        if not _is_straight_vertical_path(adjusted_paths[connection_index]):
+            continue
+
+        has_clear_label = _path_has_clear_label_candidate(
+            connection_index,
+            connection.label,
+            adjusted_paths[connection_index],
+            adjusted_paths,
+            boxes,
+        )
+        if has_clear_label:
+            continue
+
+        adjusted_paths[connection_index] = _same_lane_label_channel_path(source, target)
+        rerouted = True
+
+    return adjusted_paths, rerouted
+
+
+def _is_straight_vertical_path(path: list[tuple[float, float]]) -> bool:
+    if len(path) != 2:
+        return False
+    return abs(path[0][0] - path[1][0]) < 1e-6
+
+
+def _path_has_clear_label_candidate(
+    connection_index: int,
+    label_text: str,
+    path_points: list[tuple[float, float]],
+    connection_paths: list[list[tuple[float, float]]],
+    boxes: dict[str, NodeBox],
+) -> bool:
+    padding = _grid_size()
+    segments_by_connection = [
+        _build_segments(path, line_index)
+        for line_index, path in enumerate(connection_paths)
+    ]
+    occupied_regions = [_node_box_bounds(box) for box in boxes.values()]
+    candidates = _iter_label_candidates(
+        connection_index,
+        label_text,
+        path_points,
+        padding,
+    )
+    _, clear_count, _ = _select_best_label_candidate(
+        candidates,
+        occupied_regions,
+        segments_by_connection,
+        padding,
+    )
+    return clear_count > 0
 
 
 def _separate_overlapping_vertical_channels(

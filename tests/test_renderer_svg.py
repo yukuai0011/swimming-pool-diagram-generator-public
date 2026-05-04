@@ -101,6 +101,17 @@ connect receive --> triage
 connect triage --> reject
 """
 
+SAME_LANE_LABELED_DSL = """swimlaneDiagram
+title Same Lane Labeled Arrows
+
+lane lane1 "Lane"
+
+node top in lane1 process "Top"
+node bottom in lane1 process "Bottom"
+
+connect top -->|down| bottom
+"""
+
 AUTO_SIZE_DSL = """swimlaneDiagram
 title Auto Size
 
@@ -218,6 +229,51 @@ connect mid --> bottom : Across
 """
 
 
+def _build_paths_for_test(
+    diagram,
+    *,
+    row_gap: float = 104.0,
+    node_dimensions: dict[str, tuple[float, float]] | None = None,
+) -> tuple[dict[str, object], list[list[tuple[float, float]]]]:
+    lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+    slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+    lane_body_y = 18.0 + 48.0 + 40.0
+    lane_width = _compute_lane_width(
+        diagram,
+        lane_index_by_id,
+        node_dimensions=node_dimensions,
+    )
+    lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        lane_body_y,
+        54.0,
+        row_gap,
+        node_dimensions=node_dimensions,
+    )
+    boxes = _build_boxes(
+        diagram,
+        lane_index_by_id,
+        slot_by_node,
+        lane_width,
+        18.0,
+        lane_body_y,
+        54.0,
+        row_gap,
+        node_dimensions=node_dimensions,
+    )
+    paths = _build_connection_paths(
+        diagram,
+        boxes,
+        lane_index_by_id,
+        incident_step=incident_step,
+        cross_y_step=cross_y_step,
+    )
+    return boxes, paths
+
+
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
         diagram = parse_diagram(RENDER_DSL)
@@ -310,6 +366,45 @@ class SvgRendererTests(unittest.TestCase):
         self.assertEqual(len(paths[0]), 2)
         first_path_x = {round(point[0], 2) for point in paths[0]}
         self.assertEqual(len(first_path_x), 1)
+
+    def test_clear_labeled_same_lane_link_stays_straight(self) -> None:
+        diagram = parse_diagram(SAME_LANE_LABELED_DSL)
+        boxes, paths = _build_paths_for_test(diagram, row_gap=180.0)
+        target = boxes[diagram.connections[0].target]
+
+        self.assertEqual(len(paths[0]), 2)
+        first_path_x = {round(point[0], 2) for point in paths[0]}
+        self.assertEqual(len(first_path_x), 1)
+        self.assertAlmostEqual(paths[0][-1][0], target.x)
+        self.assertAlmostEqual(paths[0][-2][0], target.x)
+        self.assertAlmostEqual(paths[0][-1][1], target.y - target.height / 2)
+        self.assertLess(paths[0][-2][1], paths[0][-1][1])
+
+    def test_rerouted_same_lane_label_keeps_normal_arrow_entry(self) -> None:
+        diagram = parse_diagram(OVERLAP_STRESS_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        boxes, paths = _build_paths_for_test(
+            diagram,
+            node_dimensions=node_dimensions,
+        )
+
+        path = paths[0]
+        connection = diagram.connections[0]
+        source = boxes[connection.source]
+        target = boxes[connection.target]
+
+        self.assertGreater(len(path), 2)
+        self.assertAlmostEqual(path[0][0], source.x)
+        self.assertAlmostEqual(path[1][0], source.x)
+        self.assertGreater(path[1][1], path[0][1])
+        self.assertAlmostEqual(path[-1][0], target.x)
+        self.assertAlmostEqual(path[-2][0], target.x)
+        self.assertAlmostEqual(path[-1][1], target.y - target.height / 2)
+        self.assertLess(path[-2][1], path[-1][1])
 
     def test_node_auto_size_respects_text_and_line_gap(self) -> None:
         original_gap = get_global_min_line_gap()
