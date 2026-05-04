@@ -884,30 +884,54 @@ def _route_connection(
         )
 
     direction = 1.0 if target.lane_index > source.lane_index else -1.0
-    cross_y_offset = _clamp_node_offset(
-        min(source.height, target.height), hint.cross_y_offset
-    )
-    start = (
-        source.x + direction * source.width / 2,
-        source.y + source_offset + cross_y_offset,
-    )
-    end = (
-        target.x - direction * target.width / 2,
-        target.y + target_offset + cross_y_offset,
-    )
+    min_gap = get_global_min_line_gap()
 
+    # Calculate edge connection points (always at node center Y for clean entry/exit)
+    start_x = source.x + direction * source.width / 2
+    start_y = source.y + source_offset
+    end_x = target.x - direction * target.width / 2
+    end_y = target.y + target_offset
+
+    y_diff = abs(end_y - start_y)
+
+    # Case 1: Nearly same Y level - use direct horizontal line
+    if y_diff < min_gap * 2:
+        start = (start_x, start_y)
+        end = (end_x, end_y)
+        return _snap_path_to_grid([start, end], half=True)
+
+    # Case 2: Moderate Y difference - use L-shape (2 segments)
+    if y_diff < min_gap * 6:
+        start = (start_x, start_y)
+        end = (end_x, end_y)
+        # L-shape: horizontal to target X, then vertical to target Y
+        # This ensures final segment is vertical (arrow points up/down correctly)
+        if end_y > start_y:
+            # Target is below - go down at target X
+            return _snap_path_to_grid([start, (end_x, start_y), end], half=True)
+        else:
+            # Target is above - go up at target X
+            return _snap_path_to_grid([start, (end_x, start_y), end], half=True)
+
+    # Case 3: Large Y difference - use Z-shape with controlled midpoints
+    start = (start_x, start_y)
+    end = (end_x, end_y)
+
+    # Calculate mid_x with stagger to avoid overlapping lines
     mid_x = (
-        (start[0] + end[0]) / 2
+        (start_x + end_x) / 2
         + direction * 8.0
         + _stagger_value(hint.cross_slot, step=14.0)
     )
     if direction > 0:
-        mid_x = min(max(mid_x, start[0] + 16.0), end[0] - 16.0)
+        mid_x = min(max(mid_x, start_x + 16.0), end_x - 16.0)
     else:
-        mid_x = max(min(mid_x, start[0] - 16.0), end[0] + 16.0)
+        mid_x = max(min(mid_x, start_x - 16.0), end_x + 16.0)
 
+    # Z-shape: horizontal → vertical → horizontal (4 points)
+    # Final segment is always horizontal, ensuring arrow points directly left/right
     return _snap_path_to_grid(
-        [start, (mid_x, start[1]), (mid_x, end[1]), end],
+        [start, (mid_x, start_y), (mid_x, end_y), end],
         half=True,
     )
 
