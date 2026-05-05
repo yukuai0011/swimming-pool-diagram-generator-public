@@ -217,6 +217,17 @@ connect top --> mid : Down
 connect mid --> bottom : Across
 """
 
+SAME_LANE_LABEL_DSL = """swimlaneDiagram
+title Same Lane Label Test
+
+lane l1 "Lane A"
+
+node n1 in l1 process "Node 1"
+node n2 in l1 process "Node 2"
+
+connect n1 -->|label text| n2
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -310,6 +321,55 @@ class SvgRendererTests(unittest.TestCase):
         self.assertEqual(len(paths[0]), 2)
         first_path_x = {round(point[0], 2) for point in paths[0]}
         self.assertEqual(len(first_path_x), 1)
+
+    def test_same_lane_vertical_connection_with_label_is_straight(self) -> None:
+        """Same-lane vertical connections with labels should be straight lines."""
+        diagram = parse_diagram(SAME_LANE_LABEL_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram,
+            lane_index_by_id,
+            node_dimensions=node_dimensions,
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        # The connection should be a straight 2-point path
+        self.assertEqual(len(paths[0]), 2, "Same-lane vertical connection with label should be a straight 2-point path")
+
+        # All x-coordinates should be the same (vertical line)
+        path_x_coords = {round(point[0], 2) for point in paths[0]}
+        self.assertEqual(len(path_x_coords), 1, "All x-coordinates should be the same for a vertical line")
 
     def test_node_auto_size_respects_text_and_line_gap(self) -> None:
         original_gap = get_global_min_line_gap()

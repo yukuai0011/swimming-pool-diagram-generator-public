@@ -536,7 +536,6 @@ def _build_connection_paths(
                 source,
                 target,
                 route_hints[index],
-                has_label=bool(connection.label),
             )
         )
 
@@ -850,8 +849,6 @@ def _route_connection(
     source: NodeBox,
     target: NodeBox,
     hint: RouteHint,
-    *,
-    has_label: bool = False,
 ) -> list[tuple[float, float]]:
     source_offset = _clamp_node_offset(source.height, hint.start_offset)
     target_offset = _clamp_node_offset(target.height, hint.end_offset)
@@ -866,12 +863,8 @@ def _route_connection(
             end = (target.x, target.y + target.height / 2)
 
         if abs(start[0] - end[0]) < 1e-6:
-            if has_label:
-                channel_x = start[0] + _same_lane_label_channel_offset(source, target)
-                return _snap_path_to_grid(
-                    [start, (channel_x, start[1]), (channel_x, end[1]), end],
-                    half=True,
-                )
+            # Always draw straight vertical line for same-lane connections
+            # Label placement will find a spot on the vertical segment
             return _snap_path_to_grid([start, end], half=True)
 
         channel_x = (start[0] + end[0]) / 2
