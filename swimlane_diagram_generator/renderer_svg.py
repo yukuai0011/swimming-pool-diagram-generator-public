@@ -540,29 +540,32 @@ def _build_connection_paths(
             )
         )
 
-    connection_paths = _separate_overlapping_vertical_channels(
-        connection_paths, min_line_gap=min_line_gap
+    connection_paths = _separate_overlapping_channels(
+        connection_paths, orientation="vertical", min_line_gap=min_line_gap
     )
-    connection_paths = _separate_overlapping_horizontal_channels(
-        connection_paths, min_line_gap=min_line_gap
+    connection_paths = _separate_overlapping_channels(
+        connection_paths, orientation="horizontal", min_line_gap=min_line_gap
     )
-    connection_paths = _separate_overlapping_vertical_channels(
-        connection_paths, min_line_gap=min_line_gap
+    connection_paths = _separate_overlapping_channels(
+        connection_paths, orientation="vertical", min_line_gap=min_line_gap
     )
     if lane_borders_x:
         connection_paths = _nudge_paths_off_lane_borders(
             connection_paths, lane_borders_x
         )
-        connection_paths = _separate_overlapping_vertical_channels(
+        connection_paths = _separate_overlapping_channels(
             connection_paths,
+            orientation="vertical",
             min_line_gap=min_line_gap,
         )
-        connection_paths = _separate_overlapping_horizontal_channels(
+        connection_paths = _separate_overlapping_channels(
             connection_paths,
+            orientation="horizontal",
             min_line_gap=min_line_gap,
         )
-        connection_paths = _separate_overlapping_vertical_channels(
+        connection_paths = _separate_overlapping_channels(
             connection_paths,
+            orientation="vertical",
             min_line_gap=min_line_gap,
         )
     return [_normalize_path(path) for path in connection_paths]
@@ -923,9 +926,10 @@ def _clamp_node_offset(node_height: float, offset: float) -> float:
     return max(-limit, min(limit, offset))
 
 
-def _separate_overlapping_vertical_channels(
+def _separate_overlapping_channels(
     connection_paths: list[list[tuple[float, float]]],
     *,
+    orientation: str,
     min_line_gap: float,
 ) -> list[list[tuple[float, float]]]:
     adjusted_paths: list[list[tuple[float, float]]] = [
@@ -938,60 +942,35 @@ def _separate_overlapping_vertical_channels(
         attempt = 0
         candidate = base_path
 
-        if not _is_shiftable_vertical_path(candidate):
+        if not _is_shiftable_path(candidate):
             adjusted_paths[index] = candidate
-            occupied_channels.append(_extract_vertical_channel(candidate))
+            if orientation == "vertical":
+                occupied_channels.append(_extract_vertical_channel(candidate))
+            else:
+                occupied_channels.extend(_extract_horizontal_channels(candidate))
             continue
 
         while _path_channel_overlaps(
-            candidate, occupied_channels, min_line_gap=min_line_gap
+            candidate, occupied_channels, orientation=orientation, min_line_gap=min_line_gap
         ):
             attempt += 1
-            candidate = _shift_path_middle_channel(
-                base_path, _stagger_value(attempt, min_line_gap)
-            )
+            if orientation == "vertical":
+                candidate = _shift_path_middle_channel(
+                    base_path, _stagger_value(attempt, min_line_gap)
+                )
+            else:
+                shift = _stagger_value(attempt, _grid_half_step())
+                max_shift = min_line_gap * 2.0
+                shift = max(-max_shift, min(max_shift, shift))
+                candidate = _shift_path_vertically(base_path, shift)
             if attempt > 10:
                 break
 
         adjusted_paths[index] = candidate
-        occupied_channels.append(_extract_vertical_channel(candidate))
-
-    return adjusted_paths
-
-
-def _separate_overlapping_horizontal_channels(
-    connection_paths: list[list[tuple[float, float]]],
-    *,
-    min_line_gap: float,
-) -> list[list[tuple[float, float]]]:
-    adjusted_paths: list[list[tuple[float, float]]] = [
-        list(path) for path in connection_paths
-    ]
-    occupied_channels: list[tuple[float, float, float]] = []
-
-    for index, path in enumerate(adjusted_paths):
-        base_path = list(path)
-        attempt = 0
-        candidate = base_path
-
-        if not _is_shiftable_horizontal_path(candidate):
-            adjusted_paths[index] = candidate
+        if orientation == "vertical":
+            occupied_channels.append(_extract_vertical_channel(candidate))
+        else:
             occupied_channels.extend(_extract_horizontal_channels(candidate))
-            continue
-
-        while _path_horizontal_overlaps(
-            candidate, occupied_channels, min_line_gap=min_line_gap
-        ):
-            attempt += 1
-            shift = _stagger_value(attempt, _grid_half_step())
-            max_shift = min_line_gap * 2.0
-            shift = max(-max_shift, min(max_shift, shift))
-            candidate = _shift_path_vertically(base_path, shift)
-            if attempt > 10:
-                break
-
-        adjusted_paths[index] = candidate
-        occupied_channels.extend(_extract_horizontal_channels(candidate))
 
     return adjusted_paths
 
@@ -1000,43 +979,45 @@ def _path_channel_overlaps(
     path: list[tuple[float, float]],
     occupied_channels: list[tuple[float, float, float]],
     *,
+    orientation: str,
     min_line_gap: float,
 ) -> bool:
-    x, y1, y2 = _extract_vertical_channel(path)
-    for occupied_x, occupied_y1, occupied_y2 in occupied_channels:
-        if abs(x - occupied_x) >= min_line_gap:
-            continue
-        if _range_overlap(y1, y2, occupied_y1, occupied_y2) >= min_line_gap:
-            return True
-    return False
-
-
-def _path_horizontal_overlaps(
-    path: list[tuple[float, float]],
-    occupied_channels: list[tuple[float, float, float]],
-    *,
-    min_line_gap: float,
-) -> bool:
-    channels = _extract_horizontal_channels(path)
-    for y, x1, x2 in channels:
-        for occupied_y, occupied_x1, occupied_x2 in occupied_channels:
-            if abs(y - occupied_y) >= min_line_gap:
+    if orientation == "vertical":
+        x, y1, y2 = _extract_vertical_channel(path)
+        for occupied_x, occupied_y1, occupied_y2 in occupied_channels:
+            if abs(x - occupied_x) >= min_line_gap:
                 continue
-            if _range_overlap(x1, x2, occupied_x1, occupied_x2) >= min_line_gap:
+            if _range_overlap(y1, y2, occupied_y1, occupied_y2) >= min_line_gap:
                 return True
-    return False
+        return False
+    else:
+        channels = _extract_horizontal_channels(path)
+        for y, x1, x2 in channels:
+            for occupied_y, occupied_x1, occupied_x2 in occupied_channels:
+                if abs(y - occupied_y) >= min_line_gap:
+                    continue
+                if _range_overlap(x1, x2, occupied_x1, occupied_x2) >= min_line_gap:
+                    return True
+        return False
 
 
-def _is_shiftable_vertical_path(path: list[tuple[float, float]]) -> bool:
+def _is_shiftable_path(path: list[tuple[float, float]]) -> bool:
     if len(path) < 4:
         return False
     return abs(path[0][0] - path[-1][0]) >= 1.0
 
 
-def _is_shiftable_horizontal_path(path: list[tuple[float, float]]) -> bool:
+def _extract_vertical_channel(
+    path: list[tuple[float, float]],
+) -> tuple[float, float, float]:
     if len(path) < 4:
-        return False
-    return abs(path[0][0] - path[-1][0]) >= 1.0
+        x1, y1 = path[0]
+        x2, y2 = path[-1]
+        x = (x1 + x2) / 2
+        return x, min(y1, y2), max(y1, y2)
+    x, y1 = path[1]
+    _, y2 = path[2]
+    return x, min(y1, y2), max(y1, y2)
 
 
 def _extract_horizontal_channels(
@@ -1049,20 +1030,6 @@ def _extract_horizontal_channels(
         if abs(y1 - y2) < 1e-6 and abs(x1 - x2) >= 1e-6:
             channels.append((y1, min(x1, x2), max(x1, x2)))
     return channels
-
-
-def _extract_vertical_channel(
-    path: list[tuple[float, float]],
-) -> tuple[float, float, float]:
-    if len(path) < 4:
-        x1, y1 = path[0]
-        x2, y2 = path[-1]
-        x = (x1 + x2) / 2
-        return x, min(y1, y2), max(y1, y2)
-
-    x, y1 = path[1]
-    _, y2 = path[2]
-    return x, min(y1, y2), max(y1, y2)
 
 
 def _shift_path_middle_channel(
