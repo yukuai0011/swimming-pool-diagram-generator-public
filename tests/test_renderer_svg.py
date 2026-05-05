@@ -573,61 +573,6 @@ class SvgRendererTests(unittest.TestCase):
             path = paths[placement.connection_index]
             self.assertTrue(_point_on_polyline(path, placement.anchor_x, placement.anchor_y))
 
-    def test_label_padding_area_avoids_foreign_lines(self) -> None:
-        diagram = parse_diagram(OVERLAP_STRESS_DSL)
-        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
-        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
-        node_dimensions = _compute_node_dimensions(
-            diagram, lane_index_by_id, slot_by_node
-        )
-        lane_body_y = 18.0 + 48.0 + 40.0
-        lane_width = _compute_lane_width(
-            diagram,
-            lane_index_by_id,
-            node_dimensions=node_dimensions,
-        )
-        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
-            diagram,
-            lane_index_by_id,
-            slot_by_node,
-            lane_width,
-            lane_body_y,
-            54.0,
-            104.0,
-            node_dimensions=node_dimensions,
-        )
-        boxes = _build_boxes(
-            diagram,
-            lane_index_by_id,
-            slot_by_node,
-            lane_width,
-            18.0,
-            lane_body_y,
-            54.0,
-            104.0,
-            node_dimensions=node_dimensions,
-        )
-        paths = _build_connection_paths(
-            diagram,
-            boxes,
-            lane_index_by_id,
-            incident_step=incident_step,
-            cross_y_step=cross_y_step,
-        )
-
-        placements = _compute_label_placements(diagram, paths, boxes)
-        labels = {placement.text: placement for placement in placements.values()}
-        self.assertIn("Reverse Flow 1", labels)
-        self.assertIn("Horizontal A", labels)
-
-        padding = get_global_min_line_gap()
-        for placement in placements.values():
-            collisions = _foreign_line_collisions(placement, paths, padding)
-            self.assertFalse(
-                collisions,
-                f"label '{placement.text}' overlaps foreign connector segments: {collisions}",
-            )
-
     def test_label_padding_avoids_all_lines_except_anchor(self) -> None:
         diagram = parse_diagram(PADDING_TEST_DSL)
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}

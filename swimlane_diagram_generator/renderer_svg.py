@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import textwrap
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from html import escape
 
@@ -1985,20 +1985,21 @@ def _topological_order(
 ) -> list[str] | None:
     indegree = {node.id: len(incoming[node.id]) for node in nodes}
     order_lookup = {node.id: node.order for node in nodes}
-    ready = sorted(
-        (node.id for node in nodes if indegree[node.id] == 0),
-        key=lambda node_id: order_lookup[node_id],
+    ready = deque(
+        sorted(
+            (node.id for node in nodes if indegree[node.id] == 0),
+            key=lambda node_id: order_lookup[node_id],
+        )
     )
     result: list[str] = []
 
     while ready:
-        node_id = ready.pop(0)
+        node_id = ready.popleft()
         result.append(node_id)
         for next_node_id in outgoing[node_id]:
             indegree[next_node_id] -= 1
             if indegree[next_node_id] == 0:
                 ready.append(next_node_id)
-                ready.sort(key=lambda item: order_lookup[item])
 
     if len(result) != len(nodes):
         return None
