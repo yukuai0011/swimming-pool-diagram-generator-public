@@ -866,12 +866,6 @@ def _route_connection(
             end = (target.x, target.y + target.height / 2)
 
         if abs(start[0] - end[0]) < 1e-6:
-            if has_label:
-                channel_x = start[0] + _same_lane_label_channel_offset(source, target)
-                return _snap_path_to_grid(
-                    [start, (channel_x, start[1]), (channel_x, end[1]), end],
-                    half=True,
-                )
             return _snap_path_to_grid([start, end], half=True)
 
         channel_x = (start[0] + end[0]) / 2
