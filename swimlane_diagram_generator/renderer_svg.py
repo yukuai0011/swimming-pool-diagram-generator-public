@@ -129,8 +129,8 @@ def render_svg(diagram: Diagram) -> str:
     title_height = _snap_to_grid(48.0 if diagram.title else 36.0, half=True)
     lane_header_height = _snap_to_grid(40.0, half=True)
 
-    first_row_offset = _snap_to_grid(max(54.0, grid_size * 2.0), half=True)
     max_node_height = max((size[1] for size in node_dimensions.values()), default=74.0)
+    first_row_offset = _snap_to_grid(max(54.0, max_node_height / 2 + 24.0), half=True)
     row_gap = _snap_to_grid(
         max(104.0, max_node_height + max(24.0, get_global_min_line_gap() * 1.2)),
         half=True,
@@ -1867,7 +1867,7 @@ def _assign_vertical_slots(
     lane_index_by_id: dict[str, int],
 ) -> tuple[dict[str, int], int]:
     outgoing, incoming = _build_graph(diagram)
-    base_level = _compute_base_levels(diagram, outgoing, incoming)
+    base_level = _compute_base_levels(diagram, outgoing, incoming, lane_index_by_id)
     slot_by_node = _place_nodes(diagram, lane_index_by_id, base_level, incoming)
     slot_count = max(slot_by_node.values()) + 1 if slot_by_node else 0
     return slot_by_node, slot_count
@@ -1886,17 +1886,25 @@ def _compute_base_levels(
     diagram: Diagram,
     outgoing: dict[str, list[str]],
     incoming: dict[str, list[str]],
+    lane_index_by_id: dict[str, int],
 ) -> dict[str, int]:
     base_level = {node.id: 0 for node in diagram.nodes}
     topological_order = _topological_order(diagram.nodes, outgoing, incoming)
     if topological_order is None:
         return _compute_feedback_aware_levels(diagram, incoming)
 
+    node_lane_index: dict[str, int] = {
+        node.id: lane_index_by_id[node.lane_id]
+        for node in diagram.nodes
+    }
+    lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+
     for node_id in topological_order:
         for next_node_id in outgoing[node_id]:
-            base_level[next_node_id] = max(
-                base_level[next_node_id], base_level[node_id] + 1
-            )
+            if node_lane_index[node_id] == node_lane_index[next_node_id]:
+                base_level[next_node_id] = max(
+                    base_level[next_node_id], base_level[node_id] + 1
+                )
     return base_level
 
 
@@ -1928,6 +1936,9 @@ def _place_nodes(
 ) -> dict[str, int]:
     occupied_slots: set[tuple[int, int]] = set()
     slot_by_node: dict[str, int] = {}
+    node_lane_index: dict[str, int] = {
+        node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes
+    }
 
     for node in sorted(
         diagram.nodes, key=lambda item: (base_level[item.id], item.order)
@@ -1936,7 +1947,10 @@ def _place_nodes(
         slot = base_level[node.id]
         for predecessor in incoming[node.id]:
             if predecessor in slot_by_node:
-                slot = max(slot, slot_by_node[predecessor] + 1)
+                if lane_index == node_lane_index[predecessor]:
+                    slot = max(slot, slot_by_node[predecessor] + 1)
+                else:
+                    slot = max(slot, slot_by_node[predecessor])
         while (lane_index, slot) in occupied_slots:
             slot += 1
         slot_by_node[node.id] = slot
