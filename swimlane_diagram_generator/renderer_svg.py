@@ -951,7 +951,10 @@ def _separate_overlapping_channels(
             continue
 
         while _path_channel_overlaps(
-            candidate, occupied_channels, orientation=orientation, min_line_gap=min_line_gap
+            candidate,
+            occupied_channels,
+            orientation=orientation,
+            min_line_gap=min_line_gap,
         ):
             attempt += 1
             if orientation == "vertical":
@@ -1437,11 +1440,19 @@ def _anchor_on_segment(anchor_x: float, anchor_y: float, segment: _Segment) -> b
     if segment.orientation == "horizontal":
         if abs(anchor_y - segment.y1) > 1e-6:
             return False
-        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
+        return (
+            min(segment.x1, segment.x2) - 1e-6
+            <= anchor_x
+            <= max(segment.x1, segment.x2) + 1e-6
+        )
 
     if abs(anchor_x - segment.x1) > 1e-6:
         return False
-    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6
+    return (
+        min(segment.y1, segment.y2) - 1e-6
+        <= anchor_y
+        <= max(segment.y1, segment.y2) + 1e-6
+    )
 
 
 def _label_segment(
@@ -1619,16 +1630,22 @@ def _label_occupied_bounds(
 ) -> tuple[float, float, float, float]:
     left = min(placement.left, placement.anchor_x, placement.attach_x) - padding
     top = min(placement.top, placement.anchor_y, placement.attach_y) - padding
-    right = max(
-        placement.left + placement.width,
-        placement.anchor_x,
-        placement.attach_x,
-    ) + padding
-    bottom = max(
-        placement.top + placement.height,
-        placement.anchor_y,
-        placement.attach_y,
-    ) + padding
+    right = (
+        max(
+            placement.left + placement.width,
+            placement.anchor_x,
+            placement.attach_x,
+        )
+        + padding
+    )
+    bottom = (
+        max(
+            placement.top + placement.height,
+            placement.anchor_y,
+            placement.attach_y,
+        )
+        + padding
+    )
     return left, top, right, bottom
 
 
@@ -1894,8 +1911,7 @@ def _compute_base_levels(
         return _compute_feedback_aware_levels(diagram, incoming)
 
     node_lane_index: dict[str, int] = {
-        node.id: lane_index_by_id[node.lane_id]
-        for node in diagram.nodes
+        node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes
     }
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
 
