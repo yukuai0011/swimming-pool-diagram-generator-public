@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .parser import DiagramSyntaxError, parse_diagram
+from .renderer_png import render_png_bytes
 from .renderer_svg import render_svg, set_global_min_line_gap
 
 EXAMPLE_DSL = """swimlaneDiagram
@@ -113,20 +114,10 @@ def main(argv: list[str] | None = None) -> int:
         output_path = _resolve_output_path(args.input, args.output, output_format)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        svg_text = render_svg(diagram)
-
         if output_format == "png":
-            from io import BytesIO
-
-            from reportlab.graphics import renderPM
-            from svglib.svglib import svg2rlg
-
-            drawing = svg2rlg(BytesIO(svg_text.encode("utf-8")))
-            if drawing is None:
-                print("Failed to convert SVG to PNG", file=sys.stderr)
-                return 1
-            output_path.write_bytes(renderPM.drawToString(drawing, fmt="PNG"))
+            output_path.write_bytes(render_png_bytes(diagram))
         else:
+            svg_text = render_svg(diagram)
             output_path.write_text(svg_text, encoding="utf-8")
 
         print(f"Generated diagram: {output_path}")

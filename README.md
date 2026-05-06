@@ -102,6 +102,9 @@ connect move --> order : 同步销售流程
 - If `--format` is provided, it controls output (`svg` or `png`).
 - Otherwise, format is inferred from `--output` suffix.
 - Default is `svg`.
+- PNG export uses an installed CJK-capable font for Chinese/Japanese/Korean text.
+  If CJK text renders as boxes on a machine without common fonts installed, set
+  `SWIMLANE_PNG_FONT` to a `.ttf`, `.ttc`, or `.otf` font path.
 
 ### Global spacing setting
 
