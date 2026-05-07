@@ -49,10 +49,10 @@ jobs:
         run: uv sync
 
       - name: Run ruff check
-        run: uv run ruff check .
+        run: uv run --with ruff ruff check .
 
       - name: Run ruff format check
-        run: uv run ruff format --check .
+        run: uv run --with ruff ruff format --check .
 
   type-check:
     runs-on: ubuntu-latest
@@ -73,8 +73,5 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Install ty
-        run: uv tool install ty
-
       - name: Run ty check
-        run: uv run ty check .
+        run: uv run --with ty ty check .
