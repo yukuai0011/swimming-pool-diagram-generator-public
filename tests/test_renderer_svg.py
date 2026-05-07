@@ -3,7 +3,8 @@ from itertools import combinations
 
 from swimlane_diagram_generator.parser import parse_diagram
 from swimlane_diagram_generator.renderer_svg import (
-    Shape,
+    _anchor_at_segment_endpoint,
+    _anchor_on_segment,
     _assign_vertical_slots,
     _build_boxes,
     _build_connection_paths,
@@ -571,13 +572,17 @@ class SvgRendererTests(unittest.TestCase):
             )
 
             path = paths[placement.connection_index]
-            self.assertTrue(_point_on_polyline(path, placement.anchor_x, placement.anchor_y))
+            self.assertTrue(
+                _point_on_polyline(path, placement.anchor_x, placement.anchor_y)
+            )
 
     def test_label_padding_avoids_all_lines_except_anchor(self) -> None:
         diagram = parse_diagram(PADDING_TEST_DSL)
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
         slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
-        node_dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
         lane_body_y = 18.0 + 48.0 + 40.0
         lane_width = _compute_lane_width(
             diagram,
@@ -623,13 +628,19 @@ class SvgRendererTests(unittest.TestCase):
                     overlap = _segment_overlap_length(segment, rect)
                     if overlap <= 0.0:
                         continue
-                    if line_index == placement.connection_index and _anchor_on_segment(
-                        placement.anchor_x, placement.anchor_y, segment
+                    if line_index == placement.connection_index and (
+                        _anchor_on_segment(
+                            placement.anchor_x, placement.anchor_y, segment
+                        )
+                        or _anchor_at_segment_endpoint(
+                            placement.anchor_x, placement.anchor_y, segment
+                        )
                     ):
                         continue
-                    collisions.append(
-                        (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
-                    )
+                    collisions.append((
+                        line_index,
+                        (segment.x1, segment.y1, segment.x2, segment.y2),
+                    ))
             self.assertFalse(
                 collisions,
                 f"label '{placement.text}' padding overlaps connector segments: {collisions}",
@@ -640,27 +651,37 @@ class SvgRendererTests(unittest.TestCase):
         svg = render_svg(diagram)
 
         self.assertIn('class="lane-separator"', svg)
-        self.assertIn('stroke-dasharray', svg)
+        self.assertIn("stroke-dasharray", svg)
 
         # The outer border should remain solid (no dash array on the first chart rect)
-        outer_rect = svg.split('\n')[3]
-        self.assertNotIn('stroke-dasharray', outer_rect)
+        outer_rect = svg.split("\n")[3]
+        self.assertNotIn("stroke-dasharray", outer_rect)
 
     def test_node_text_padding_grows_small_nodes(self):
         """Nodes with short CJK text should be larger than the bare minimum."""
-        from swimlane_diagram_generator.renderer_svg import NODE_TEXT_PAD_H, NODE_TEXT_PAD_V
+        from swimlane_diagram_generator.renderer_svg import (
+            NODE_TEXT_PAD_H,
+            NODE_TEXT_PAD_V,
+        )
+
         self.assertGreater(NODE_TEXT_PAD_H, 0.0)
         self.assertGreater(NODE_TEXT_PAD_V, 0.0)
 
-        diagram = parse_diagram('swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n')
+        diagram = parse_diagram(
+            'swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n'
+        )
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
         slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
         dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
         w, h = dimensions["n1"]
         # Without padding, the 4-char CJK text "执行维修" fits in (60, 36).
         # With NODE_TEXT_PAD_H/V, the node should grow beyond that.
-        self.assertGreater(w, 60.0, "padding should increase node width beyond unpadded size")
-        self.assertGreater(h, 36.0, "padding should increase node height beyond unpadded size")
+        self.assertGreater(
+            w, 60.0, "padding should increase node width beyond unpadded size"
+        )
+        self.assertGreater(
+            h, 36.0, "padding should increase node height beyond unpadded size"
+        )
 
 
 if __name__ == "__main__":
@@ -684,10 +705,7 @@ def _rects_overlap(
     left_1, top_1, right_1, bottom_1 = first
     left_2, top_2, right_2, bottom_2 = second
     return not (
-        right_1 <= left_2
-        or right_2 <= left_1
-        or bottom_1 <= top_2
-        or bottom_2 <= top_1
+        right_1 <= left_2 or right_2 <= left_1 or bottom_1 <= top_2 or bottom_2 <= top_1
     )
 
 
@@ -698,7 +716,7 @@ def _point_on_polyline(path: list[tuple[float, float]], x: float, y: float) -> b
         if abs(x1 - x2) < 1e-6:
             if abs(x - x1) < 1e-6 and min(y1, y2) - 1e-6 <= y <= max(y1, y2) + 1e-6:
                 return True
-        elif abs(y1 - y2) < 1e-6:
+        elif abs(y1 - y2) < 1e-6:  # noqa: SIM102
             if abs(y - y1) < 1e-6 and min(x1, x2) - 1e-6 <= x <= max(x1, x2) + 1e-6:
                 return True
     return False
@@ -718,9 +736,10 @@ def _foreign_line_collisions(
         for segment in _build_segments(path, line_index):
             if not _segment_collides_with_rect(segment, rect):
                 continue
-            collisions.append(
-                (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
-            )
+            collisions.append((
+                line_index,
+                (segment.x1, segment.y1, segment.x2, segment.y2),
+            ))
     return collisions
 
 
@@ -730,16 +749,22 @@ def _placement_occupied_rect(
 ) -> tuple[float, float, float, float]:
     left = min(placement.left, placement.anchor_x, placement.attach_x) - padding
     top = min(placement.top, placement.anchor_y, placement.attach_y) - padding
-    right = max(
-        placement.left + placement.width,
-        placement.anchor_x,
-        placement.attach_x,
-    ) + padding
-    bottom = max(
-        placement.top + placement.height,
-        placement.anchor_y,
-        placement.attach_y,
-    ) + padding
+    right = (
+        max(
+            placement.left + placement.width,
+            placement.anchor_x,
+            placement.attach_x,
+        )
+        + padding
+    )
+    bottom = (
+        max(
+            placement.top + placement.height,
+            placement.anchor_y,
+            placement.attach_y,
+        )
+        + padding
+    )
     return left, top, right, bottom
 
 
@@ -789,14 +814,3 @@ def _segment_overlap_length(
     low = max(min(segment.y1, segment.y2), top)
     high = min(max(segment.y1, segment.y2), bottom)
     return max(0.0, high - low)
-
-
-def _anchor_on_segment(anchor_x: float, anchor_y: float, segment) -> bool:
-    if segment.orientation == "horizontal":
-        if abs(anchor_y - segment.y1) > 1e-6:
-            return False
-        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
-
-    if abs(anchor_x - segment.x1) > 1e-6:
-        return False
-    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6

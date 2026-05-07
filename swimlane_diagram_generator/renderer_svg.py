@@ -1411,10 +1411,17 @@ def _foreign_line_overlap_score(
             overlap = _segment_rect_overlap(segment, occupied)
             if overlap <= 0.0:
                 continue
-            if segment.line_index == candidate.connection_index and _anchor_on_segment(
-                candidate.anchor_x,
-                candidate.anchor_y,
-                segment,
+            if segment.line_index == candidate.connection_index and (
+                _anchor_on_segment(
+                    candidate.anchor_x,
+                    candidate.anchor_y,
+                    segment,
+                )
+                or _anchor_at_segment_endpoint(
+                    candidate.anchor_x,
+                    candidate.anchor_y,
+                    segment,
+                )
             ):
                 continue
             total_overlap += overlap
@@ -1453,6 +1460,47 @@ def _anchor_on_segment(anchor_x: float, anchor_y: float, segment: _Segment) -> b
         <= anchor_y
         <= max(segment.y1, segment.y2) + 1e-6
     )
+
+
+def _anchor_at_segment_endpoint(
+    anchor_x: float, anchor_y: float, segment: _Segment
+) -> bool:
+    """Check if anchor is at an endpoint of the segment or connected corner.
+
+    This handles the case where the anchor is at a corner junction - the anchor
+    sits at one endpoint of one segment, and the overlapping segment is
+    perpendicular starting/ending at the same corner point.
+    """
+    if segment.orientation == "horizontal":
+        # Check exact endpoint match
+        if abs(anchor_y - segment.y1) <= 1e-6:
+            start_matches = (
+                abs(anchor_x - segment.x1) < 1e-6 and abs(anchor_y - segment.y1) < 1e-6
+            )
+            end_matches = (
+                abs(anchor_x - segment.x2) < 1e-6 and abs(anchor_y - segment.y1) < 1e-6
+            )
+            if start_matches or end_matches:
+                return True
+        # Check if anchor is above/below the corner and connected via vertical segment
+        # This handles the case where anchor is at top of corner but segment is below
+        if abs(anchor_x - segment.x1) < 1e-6:
+            corner_y = segment.y1
+            # If anchor is directly above/below the corner point (same x, different y)
+            if abs(anchor_y - corner_y) <= 10.0:  # within 10 units of corner
+                return True
+        return False
+
+    if abs(anchor_x - segment.x1) > 1e-6:
+        return False
+    # Check exact endpoint match for vertical segment
+    start_matches = (
+        abs(anchor_x - segment.x1) < 1e-6 and abs(anchor_y - segment.y1) < 1e-6
+    )
+    end_matches = (
+        abs(anchor_x - segment.x1) < 1e-6 and abs(anchor_y - segment.y2) < 1e-6
+    )
+    return start_matches or end_matches
 
 
 def _label_segment(
