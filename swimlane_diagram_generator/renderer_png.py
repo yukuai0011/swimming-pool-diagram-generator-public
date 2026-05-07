@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from typing import Any, cast
 
 from reportlab.graphics import renderPM
+from reportlab.graphics.shapes import Drawing, String
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from svglib.svglib import svg2rlg
@@ -53,7 +55,7 @@ _FONT_GLOB_PATTERNS = (
 def render_png_bytes(diagram: Diagram) -> bytes:
     """Render diagram to PNG bytes by converting the SVG output."""
     svg_text = render_svg(diagram)
-    drawing = svg2rlg(BytesIO(svg_text.encode("utf-8")))
+    drawing = svg2rlg(cast(Any, BytesIO(svg_text.encode("utf-8"))))
     if drawing is None:
         raise RuntimeError("Failed to convert SVG to drawing")
 
@@ -66,7 +68,7 @@ def render_png(diagram: Diagram, output_path: str) -> None:
     Path(output_path).write_bytes(render_png_bytes(diagram))
 
 
-def _apply_cjk_font_if_needed(drawing: object) -> str | None:
+def _apply_cjk_font_if_needed(drawing: Drawing) -> str | None:
     if not any(
         _contains_cjk_text(str(text.text)) for text in _iter_text_nodes(drawing)
     ):
@@ -80,16 +82,17 @@ def _apply_cjk_font_if_needed(drawing: object) -> str | None:
     return font_name
 
 
-def _apply_text_font(drawing: object, font_name: str) -> None:
+def _apply_text_font(drawing: Drawing, font_name: str) -> None:
     for text in _iter_text_nodes(drawing):
         text.fontName = font_name
 
 
-def _iter_text_nodes(drawing: object) -> Iterator[object]:
-    for child in getattr(drawing, "contents", ()) or ():
-        if hasattr(child, "fontName") and hasattr(child, "text"):
+def _iter_text_nodes(drawing: Drawing) -> Iterator[String]:
+    for child in drawing.contents:
+        if isinstance(child, String):
             yield child
-        yield from _iter_text_nodes(child)
+        elif hasattr(child, "contents"):
+            yield from _iter_text_nodes(child)
 
 
 def _contains_cjk_text(text: str) -> bool:
