@@ -1,0 +1,26 @@
+swimlaneDiagram
+title IT Purchase Approval Flow (Feature Showcase)
+
+lane requester "Requester"
+lane approver "Approver"
+lane finance "Finance"
+lane it "IT"
+
+node start in requester [start/end] "Start"
+node submit in requester process "Submit Purchase Request"
+node approved in approver decision "Manager Approved?"
+node budget in finance subprocess "Budget Check"
+node po in finance document "Create PO"
+node reserve in it data "Reserve Equipment"
+node fulfill in it process "Procure & Fulfill"
+node end in requester [start/end] "End"
+
+connect start --> submit
+connect submit --> approved
+connect approved -->|Yes| budget
+connect approved -->|No| submit
+connect budget -->|Pass| po
+connect budget -->|Fail| submit
+connect po --> reserve
+connect reserve --> fulfill
+connect fulfill --> end

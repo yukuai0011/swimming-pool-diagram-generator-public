@@ -1,0 +1,62 @@
+swimlaneDiagram
+title Stress Test: Dense Multi-Lane Flow
+
+lane l1 "Lane 1"
+lane l2 "Lane 2"
+lane l3 "Lane 3"
+lane l4 "Lane 4"
+lane l5 "Lane 5"
+
+node s1 in l1 [start/end] "Start"
+node n1 in l1 process "Node 1"
+node n2 in l2 process "Node 2"
+node n3 in l3 process "Node 3"
+node n4 in l4 process "Node 4"
+node n5 in l5 process "Node 5"
+node d1 in l2 decision "Decision 1"
+node d2 in l4 decision "Decision 2"
+node sub1 in l3 subprocess "Subprocess 1"
+node sub2 in l5 subprocess "Subprocess 2"
+node doc1 in l1 document "Doc 1"
+node doc2 in l3 document "Doc 2"
+node data1 in l2 data "Data 1"
+node data2 in l5 data "Data 2"
+node e1 in l1 [start/end] "End 1"
+node e2 in l5 [start/end] "End 2"
+
+# Main flow
+connect s1 --> n1
+connect n1 --> n2
+connect n2 --> d1
+connect d1 -->|Yes| n3
+connect d1 -->|No| n1
+connect n3 --> sub1
+connect sub1 --> n4
+connect n4 --> d2
+connect d2 -->|Pass| n5
+connect d2 -->|Fail| n3
+
+# Crossings - horizontal lines crossing vertical flow
+connect n2 --> doc1 : Cross A
+connect sub1 --> doc2 : Cross B
+connect n4 --> data1 : Cross C
+connect n5 --> data2 : Cross D
+
+# Long-span connections crossing 3+ lanes
+connect n1 --> e1 : Long Span 1
+connect sub1 --> e2 : Long Span 2
+
+# Parallel paths merging
+connect n3 --> n5
+connect doc2 --> n5 : Merge Path
+
+# Many connectors converging on single nodes
+connect data1 --> n5
+connect data2 --> n5
+connect n5 --> sub2
+connect sub2 --> e2
+
+# Additional crossing lines
+connect d2 --> doc1 : Extra Cross 1
+connect sub2 --> n2 : Extra Cross 2
+connect doc1 --> data2 : Extra Cross 3
