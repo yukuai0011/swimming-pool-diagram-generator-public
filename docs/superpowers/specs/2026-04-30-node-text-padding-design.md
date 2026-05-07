@@ -11,8 +11,8 @@ Add explicit horizontal and vertical padding constants to the node sizing pipeli
 ## Constants
 
 ```python
-NODE_TEXT_PAD_H = 8.0   # horizontal padding, each side (px)
-NODE_TEXT_PAD_V = 6.0   # vertical padding, each side (px)
+NODE_TEXT_PAD_H = 8.0  # horizontal padding, each side (px)
+NODE_TEXT_PAD_V = 6.0  # vertical padding, each side (px)
 ```
 
 ## Changes

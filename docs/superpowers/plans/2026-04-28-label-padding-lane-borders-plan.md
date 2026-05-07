@@ -56,11 +56,19 @@ def _anchor_on_segment(anchor_x: float, anchor_y: float, segment) -> bool:
     if segment.orientation == "horizontal":
         if abs(anchor_y - segment.y1) > 1e-6:
             return False
-        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
+        return (
+            min(segment.x1, segment.x2) - 1e-6
+            <= anchor_x
+            <= max(segment.x1, segment.x2) + 1e-6
+        )
 
     if abs(anchor_x - segment.x1) > 1e-6:
         return False
-    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6
+    return (
+        min(segment.y1, segment.y2) - 1e-6
+        <= anchor_y
+        <= max(segment.y1, segment.y2) + 1e-6
+    )
 ```
 
 - [ ] **Step 2: Add failing test for padding vs all segments (anchor-only exception)**
@@ -118,13 +126,18 @@ def test_label_padding_avoids_all_lines_except_anchor(self) -> None:
                 overlap = _segment_overlap_length(segment, rect)
                 if overlap <= 0.0:
                     continue
-                if line_index == placement.connection_index and _anchor_on_segment(
-                    placement.anchor_x, placement.anchor_y, segment
-                ) and overlap <= 1e-6:
+                if (
+                    line_index == placement.connection_index
+                    and _anchor_on_segment(
+                        placement.anchor_x, placement.anchor_y, segment
+                    )
+                    and overlap <= 1e-6
+                ):
                     continue
-                collisions.append(
-                    (line_index, (segment.x1, segment.y1, segment.x2, segment.y2))
-                )
+                collisions.append((
+                    line_index,
+                    (segment.x1, segment.y1, segment.x2, segment.y2),
+                ))
         self.assertFalse(
             collisions,
             f"label '{placement.text}' padding overlaps connector segments: {collisions}",
@@ -141,11 +154,11 @@ def test_internal_lane_separators_are_dotted(self) -> None:
     svg = render_svg(diagram)
 
     self.assertIn('class="lane-separator"', svg)
-    self.assertIn('stroke-dasharray', svg)
+    self.assertIn("stroke-dasharray", svg)
 
     # The outer border should remain solid (no dash array on the first chart rect)
-    outer_rect = svg.split('\n')[3]
-    self.assertNotIn('stroke-dasharray', outer_rect)
+    outer_rect = svg.split("\n")[3]
+    self.assertNotIn("stroke-dasharray", outer_rect)
 ```
 
 - [ ] **Step 4: Run the SVG tests to confirm failure (RED)**
@@ -178,11 +191,19 @@ def _anchor_on_segment(anchor_x: float, anchor_y: float, segment: _Segment) -> b
     if segment.orientation == "horizontal":
         if abs(anchor_y - segment.y1) > 1e-6:
             return False
-        return min(segment.x1, segment.x2) - 1e-6 <= anchor_x <= max(segment.x1, segment.x2) + 1e-6
+        return (
+            min(segment.x1, segment.x2) - 1e-6
+            <= anchor_x
+            <= max(segment.x1, segment.x2) + 1e-6
+        )
 
     if abs(anchor_x - segment.x1) > 1e-6:
         return False
-    return min(segment.y1, segment.y2) - 1e-6 <= anchor_y <= max(segment.y1, segment.y2) + 1e-6
+    return (
+        min(segment.y1, segment.y2) - 1e-6
+        <= anchor_y
+        <= max(segment.y1, segment.y2) + 1e-6
+    )
 ```
 
 - [ ] **Step 2: Update overlap scoring to include own segments with anchor exception**
@@ -202,11 +223,15 @@ def _foreign_line_overlap_score(
             overlap = _segment_rect_overlap(segment, occupied)
             if overlap <= 0.0:
                 continue
-            if segment.line_index == candidate.connection_index and _anchor_on_segment(
-                candidate.anchor_x,
-                candidate.anchor_y,
-                segment,
-            ) and overlap <= 1e-6:
+            if (
+                segment.line_index == candidate.connection_index
+                and _anchor_on_segment(
+                    candidate.anchor_x,
+                    candidate.anchor_y,
+                    segment,
+                )
+                and overlap <= 1e-6
+            ):
                 continue
             total_overlap += overlap
     return total_overlap
@@ -339,7 +364,9 @@ _draw_rect(
     stroke_width=0,
 )
 # Solid line between header and body
-_draw_line(draw, chart_x, lane_body_y, chart_x + chart_width, lane_body_y, LINE_COLOR, 1)
+_draw_line(
+    draw, chart_x, lane_body_y, chart_x + chart_width, lane_body_y, LINE_COLOR, 1
+)
 ```
 
 Also update `_draw_rect` to accept `outline: str | None` and skip outline when `None`.
@@ -347,7 +374,15 @@ Also update `_draw_rect` to accept `outline: str | None` and skip outline when `
 Add helper for horizontal line if needed:
 
 ```python
-def _draw_line(draw: ImageDraw.ImageDraw, x1: float, y1: float, x2: float, y2: float, color: str, width: int) -> None:
+def _draw_line(
+    draw: ImageDraw.ImageDraw,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    color: str,
+    width: int,
+) -> None:
     draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
 ```
 

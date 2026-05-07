@@ -24,7 +24,9 @@ Add test to `tests/test_renderer_svg.py`. Import `_fit_text_in_grid_units` and `
 ```python
 def test_node_text_padding_grows_small_nodes(self):
     """Nodes with short CJK text should be larger than the bare minimum."""
-    diagram = parse_diagram("swimlaneDiagram\ntitle T\nlane l1 \"L\"\nnode n1 in l1 process \"执行维修\"\n")
+    diagram = parse_diagram(
+        'swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n'
+    )
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
     slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
     dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
@@ -40,7 +42,10 @@ Note: the test imports `Process` — actually use `Shape.PROCESS` (already impor
 ```python
 def test_node_text_padding_grows_small_nodes(self):
     from swimlane_diagram_generator.renderer_svg import _shape_text_box_factors
-    diagram = parse_diagram('swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n')
+
+    diagram = parse_diagram(
+        'swimlaneDiagram\ntitle T\nlane l1 "L"\nnode n1 in l1 process "执行维修"\n'
+    )
     lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
     slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
     dimensions = _compute_node_dimensions(diagram, lane_index_by_id, slot_by_node)
