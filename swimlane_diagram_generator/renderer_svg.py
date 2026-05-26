@@ -511,6 +511,100 @@ def _build_boxes(
     return boxes
 
 
+def _avoid_node_obstacles(
+    path: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float]]:
+    if len(path) < 2 or not obstacles:
+        return path
+
+    grid = _grid_size()
+    margin = grid * 1.5
+    new_path = list(path)
+
+    for seg_idx in range(len(new_path) - 1):
+        p1 = new_path[seg_idx]
+        p2 = new_path[seg_idx + 1]
+
+        is_horizontal = abs(p1[1] - p2[1]) < 1e-6
+        is_vertical = abs(p1[0] - p2[0]) < 1e-6
+        if not is_horizontal and not is_vertical:
+            continue
+
+        if is_horizontal:
+            colliding = _horizontal_collisions(p1, p2, obstacles, margin)
+            if colliding:
+                combined_top = min(obs[1] for obs in colliding)
+                combined_bottom = max(obs[3] for obs in colliding)
+                seg_y = p1[1]
+                dist_above = seg_y - combined_top
+                dist_below = combined_bottom - seg_y
+                new_y = (combined_top - grid) if dist_above <= dist_below else (combined_bottom + grid)
+                new_path[seg_idx] = (p1[0], new_y)
+                new_path[seg_idx + 1] = (p2[0], new_y)
+        elif is_vertical:
+            colliding = _vertical_collisions(p1, p2, obstacles, margin)
+            if colliding:
+                combined_left = min(obs[0] for obs in colliding)
+                combined_right = max(obs[2] for obs in colliding)
+                seg_x = p1[0]
+                dist_left = seg_x - combined_left
+                dist_right = combined_right - seg_x
+                new_x = (combined_left - grid) if dist_left <= dist_right else (combined_right + grid)
+                new_path[seg_idx] = (new_x, p1[1])
+                new_path[seg_idx + 1] = (new_x, p2[1])
+
+    return _snap_path_to_grid(_normalize_path(new_path), half=True)
+
+
+def _horizontal_collisions(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    obstacles: list[tuple[float, float, float, float]],
+    margin: float,
+) -> list[tuple[float, float, float, float]]:
+    seg_y = p1[1]
+    seg_x_min = min(p1[0], p2[0])
+    seg_x_max = max(p1[0], p2[0])
+    colliding: list[tuple[float, float, float, float]] = []
+    for obs_left, obs_top, obs_right, obs_bottom in obstacles:
+        obs_left_m = obs_left - margin
+        obs_top_m = obs_top - margin
+        obs_right_m = obs_right + margin
+        obs_bottom_m = obs_bottom + margin
+        if seg_y > obs_top_m and seg_y < obs_bottom_m:
+            overlap_start = max(seg_x_min, obs_left_m)
+            overlap_end = min(seg_x_max, obs_right_m)
+            if overlap_end - overlap_start > 1e-6:
+                colliding.append((obs_left_m, obs_top_m, obs_right_m, obs_bottom_m))
+    colliding.sort(key=lambda obs: obs[0])
+    return colliding
+
+
+def _vertical_collisions(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    obstacles: list[tuple[float, float, float, float]],
+    margin: float,
+) -> list[tuple[float, float, float, float]]:
+    seg_x = p1[0]
+    seg_y_min = min(p1[1], p2[1])
+    seg_y_max = max(p1[1], p2[1])
+    colliding: list[tuple[float, float, float, float]] = []
+    for obs_left, obs_top, obs_right, obs_bottom in obstacles:
+        obs_left_m = obs_left - margin
+        obs_top_m = obs_top - margin
+        obs_right_m = obs_right + margin
+        obs_bottom_m = obs_bottom + margin
+        if seg_x > obs_left_m and seg_x < obs_right_m:
+            overlap_start = max(seg_y_min, obs_top_m)
+            overlap_end = min(seg_y_max, obs_bottom_m)
+            if overlap_end - overlap_start > 1e-6:
+                colliding.append((obs_left_m, obs_top_m, obs_right_m, obs_bottom_m))
+    colliding.sort(key=lambda obs: obs[1])
+    return colliding
+
+
 def _build_connection_paths(
     diagram: Diagram,
     boxes: dict[str, NodeBox],
@@ -528,6 +622,8 @@ def _build_connection_paths(
         cross_y_step=cross_y_step,
     )
     connection_paths: list[list[tuple[float, float]]] = []
+    node_obstacles = [_node_box_bounds(box) for box in boxes.values()]
+    node_ids = list(boxes.keys())
     for index, connection in enumerate(diagram.connections):
         source = boxes[connection.source]
         target = boxes[connection.target]
@@ -568,6 +664,17 @@ def _build_connection_paths(
             orientation="vertical",
             min_line_gap=min_line_gap,
         )
+
+    for index, connection in enumerate(diagram.connections):
+        excluded = {connection.source, connection.target}
+        obstacle_indices = [
+            i for i, nid in enumerate(node_ids) if nid not in excluded
+        ]
+        connection_paths[index] = _avoid_node_obstacles(
+            connection_paths[index],
+            [node_obstacles[i] for i in obstacle_indices],
+        )
+
     return [_normalize_path(path) for path in connection_paths]
 
 
