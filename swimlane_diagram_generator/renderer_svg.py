@@ -540,6 +540,18 @@ def _build_connection_paths(
             )
         )
 
+    # Inject detour waypoints for any path that crosses intermediate nodes
+    for idx, connection in enumerate(diagram.connections):
+        source_id = connection.source
+        target_id = connection.target
+        path = connection_paths[idx]
+        crossed = _path_has_crossed_nodes(
+            path, boxes, source_id, target_id, min_line_gap
+        )
+        for node_id in crossed:
+            path = _inject_detour(path, node_id, boxes, min_line_gap)
+        connection_paths[idx] = path
+
     connection_paths = _separate_overlapping_channels(
         connection_paths, orientation="vertical", min_line_gap=min_line_gap
     )
