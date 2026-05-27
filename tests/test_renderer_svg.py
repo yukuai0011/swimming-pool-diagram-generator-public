@@ -15,6 +15,7 @@ from swimlane_diagram_generator.renderer_svg import (
     _compute_node_dimensions,
     _count_close_parallel_segments,
     _label_anchor,
+    _node_box_bounds,
     _resolve_layout_tuning,
     _shape_size,
     get_global_min_line_gap,
@@ -100,6 +101,24 @@ node reject in partner process "驳回并补充资料"
 connect start --> receive
 connect receive --> triage
 connect triage --> reject
+"""
+
+DETOUR_DECISION_DSL = """swimlaneDiagram
+title Detour Routing Test
+
+lane l1 "Lane 1"
+lane l2 "Lane 2"
+lane l3 "Lane 3"
+
+node start in l1 [start/end] "Start"
+node dec in l2 decision "Decision"
+node mid in l2 process "Mid"
+node end in l3 [start/end] "End"
+
+connect start --> mid
+connect mid --> dec
+connect dec -->|pass| end
+connect dec -->|fail| mid
 """
 
 AUTO_SIZE_DSL = """swimlaneDiagram
@@ -682,6 +701,83 @@ class SvgRendererTests(unittest.TestCase):
         self.assertGreater(
             h, 36.0, "padding should increase node height beyond unpadded size"
         )
+
+
+class DetourRoutingTests(unittest.TestCase):
+    def test_paths_do_not_intersect_intermediate_node_boxes(self) -> None:
+        """Connections that cross a non-terminal node's bounding box get detour bends."""
+        diagram = parse_diagram(DETOUR_DECISION_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width = _compute_lane_width(
+            diagram, lane_index_by_id, node_dimensions=node_dimensions
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            54.0,
+            104.0,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+
+        min_gap = get_global_min_line_gap()
+        # For each connection path, check it doesn't intersect non-terminal node boxes
+        for conn_idx, connection in enumerate(diagram.connections):
+            path = paths[conn_idx]
+            source_id = connection.source
+            target_id = connection.target
+            for node_id, box in boxes.items():
+                if node_id in (source_id, target_id):
+                    continue
+                left, top, right, bottom = _node_box_bounds(box)
+                # Shrink exclusion slightly so paths near but not through aren't flagged
+                excl = min_gap * 0.5
+                inner_l, inner_t = left + excl, top + excl
+                inner_r, inner_b = right - excl, bottom - excl
+                for i in range(len(path) - 1):
+                    x1, y1 = path[i]
+                    x2, y2 = path[i + 1]
+                    if abs(y1 - y2) < 1e-6:  # horizontal
+                        if inner_t <= y1 <= inner_b:
+                            x_min, x_max = min(x1, x2), max(x1, x2)
+                            self.assertFalse(
+                                max(x_min, inner_l) < min(x_max, inner_r),
+                                f"Connection {conn_idx} horizontal segment crosses "
+                                f"node {node_id} at y={y1}",
+                            )
+                    elif abs(x1 - x2) < 1e-6:  # vertical
+                        if inner_l <= x1 <= inner_r:
+                            y_min, y_max = min(y1, y2), max(y1, y2)
+                            self.assertFalse(
+                                max(y_min, inner_t) < min(y_max, inner_b),
+                                f"Connection {conn_idx} vertical segment crosses "
+                                f"node {node_id} at x={x1}",
+                            )
 
 
 if __name__ == "__main__":
