@@ -1061,6 +1061,151 @@ def _range_overlap(a1: float, a2: float, b1: float, b2: float) -> float:
     return max(0.0, high - low)
 
 
+def _path_crosses_node(
+    path: list[tuple[float, float]],
+    node_id: str,
+    boxes: dict[str, NodeBox],
+    min_line_gap: float,
+) -> bool:
+    """Return True if any segment of path crosses through the node's bounding box.
+
+    A crossing is detected when a horizontal segment's y falls within the node's
+    y-range AND its x-span overlaps the node's x-range, or similarly for a
+    vertical segment crossing the node's x-range.
+    """
+    if len(path) < 2:
+        return False
+
+    left, top, right, bottom = _node_box_bounds(boxes[node_id])
+    # Shrink the exclusion zone slightly so paths that merely touch the edge
+    # (without entering) are not flagged.
+    exclusion = min_line_gap * 0.5
+    inner_left = left + exclusion
+    inner_top = top + exclusion
+    inner_right = right - exclusion
+    inner_bottom = bottom - exclusion
+
+    for i in range(len(path) - 1):
+        x1, y1 = path[i]
+        x2, y2 = path[i + 1]
+
+        if abs(y1 - y2) < 1e-6:  # horizontal segment
+            y = y1
+            x_min, x_max = min(x1, x2), max(x1, x2)
+            if inner_top <= y <= inner_bottom:
+                if _range_overlap(x_min, x_max, inner_left, inner_right) >= 1e-6:
+                    return True
+
+        elif abs(x1 - x2) < 1e-6:  # vertical segment
+            x = x1
+            y_min, y_max = min(y1, y2), max(y1, y2)
+            if inner_left <= x <= inner_right:
+                if _range_overlap(y_min, y_max, inner_top, inner_bottom) >= 1e-6:
+                    return True
+
+    return False
+
+
+def _inject_detour(
+    path: list[tuple[float, float]],
+    crossed_node_id: str,
+    boxes: dict[str, NodeBox],
+    min_line_gap: float,
+) -> list[tuple[float, float]]:
+    """Return a new path with detour waypoints around the crossed node.
+
+    For a horizontal segment entering the node's bounding box, route above or
+    below the node. For a vertical segment, route left or right.
+    Preference: above > below for horizontal; right > left for vertical.
+    """
+    box = boxes[crossed_node_id]
+    left, top, right, bottom = _node_box_bounds(box)
+    clearance = min_line_gap
+
+    # Find the segment index where crossing occurs
+    crossing_index = -1
+    for i in range(len(path) - 1):
+        x1, y1 = path[i]
+        x2, y2 = path[i + 1]
+        if abs(y1 - y2) < 1e-6:  # horizontal
+            if top - clearance <= y1 <= bottom + clearance:
+                x_min, x_max = min(x1, x2), max(x1, x2)
+                if x_min <= right and x_max >= left:
+                    crossing_index = i
+                    break
+        elif abs(x1 - x2) < 1e-6:  # vertical
+            if left - clearance <= x1 <= right + clearance:
+                y_min, y_max = min(y1, y2), max(y1, y2)
+                if y_min <= bottom and y_max >= top:
+                    crossing_index = i
+                    break
+
+    if crossing_index < 0:
+        return path
+
+    # Determine detour direction
+    seg_x1, seg_y1 = path[crossing_index]
+    seg_x2, seg_y2 = path[crossing_index + 1]
+
+    if abs(seg_y1 - seg_y2) < 1e-6:  # horizontal segment — route above/below
+        mid_x = (seg_x1 + seg_x2) / 2.0
+        dist_above = seg_y1 - top
+        dist_below = bottom - seg_y1
+        if dist_above >= dist_below:
+            # Route above
+            detour_y = top - clearance
+            new_path = list(path)
+            insert_idx = crossing_index + 1
+            new_path.insert(insert_idx, (mid_x, detour_y))
+            new_path.insert(insert_idx + 1, (mid_x, top - clearance))
+            return _snap_path_to_grid(new_path, half=True)
+        else:
+            # Route below
+            detour_y = bottom + clearance
+            new_path = list(path)
+            insert_idx = crossing_index + 1
+            new_path.insert(insert_idx, (mid_x, detour_y))
+            new_path.insert(insert_idx + 1, (mid_x, bottom + clearance))
+            return _snap_path_to_grid(new_path, half=True)
+    else:  # vertical segment — route left/right
+        mid_y = (seg_y1 + seg_y2) / 2.0
+        dist_right = left - seg_x1
+        dist_left = seg_x1 - right
+        if dist_right >= dist_left:
+            # Route right
+            detour_x = left - clearance
+            new_path = list(path)
+            insert_idx = crossing_index + 1
+            new_path.insert(insert_idx, (detour_x, mid_y))
+            new_path.insert(insert_idx + 1, (left - clearance, mid_y))
+            return _snap_path_to_grid(new_path, half=True)
+        else:
+            # Route left
+            detour_x = right + clearance
+            new_path = list(path)
+            insert_idx = crossing_index + 1
+            new_path.insert(insert_idx, (detour_x, mid_y))
+            new_path.insert(insert_idx + 1, (right + clearance, mid_y))
+            return _snap_path_to_grid(new_path, half=True)
+
+
+def _path_has_crossed_nodes(
+    path: list[tuple[float, float]],
+    boxes: dict[str, NodeBox],
+    source_id: str,
+    target_id: str,
+    min_line_gap: float,
+) -> list[str]:
+    """Return list of node IDs whose bounding boxes are crossed by the path."""
+    crossed = []
+    for node_id, box in boxes.items():
+        if node_id in (source_id, target_id):
+            continue
+        if _path_crosses_node(path, node_id, boxes, min_line_gap):
+            crossed.append(node_id)
+    return crossed
+
+
 def _compute_line_jumps(
     connection_paths: list[list[tuple[float, float]]],
 ) -> list[LineJump]:
