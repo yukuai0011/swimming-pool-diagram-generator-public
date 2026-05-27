@@ -580,6 +580,20 @@ def _build_connection_paths(
             orientation="vertical",
             min_line_gap=min_line_gap,
         )
+
+    # Inject detour waypoints AFTER separation so node-avoidance doesn't get
+    # overwritten by subsequent separation shifts.
+    for idx, connection in enumerate(diagram.connections):
+        source_id = connection.source
+        target_id = connection.target
+        path = connection_paths[idx]
+        crossed = _path_has_crossed_nodes(
+            path, boxes, source_id, target_id, min_line_gap
+        )
+        for node_id in crossed:
+            path = _inject_detour(path, node_id, boxes, min_line_gap)
+        connection_paths[idx] = path
+
     return [_normalize_path(path) for path in connection_paths]
 
 
@@ -1089,13 +1103,10 @@ def _path_crosses_node(
         return False
 
     left, top, right, bottom = _node_box_bounds(boxes[node_id])
-    # Shrink the exclusion zone slightly so paths that merely touch the edge
-    # (without entering) are not flagged.
-    exclusion = min_line_gap * 0.5
-    inner_left = left + exclusion
-    inner_top = top + exclusion
-    inner_right = right - exclusion
-    inner_bottom = bottom - exclusion
+    inner_left = left
+    inner_top = top
+    inner_right = right
+    inner_bottom = bottom
 
     for i in range(len(path) - 1):
         x1, y1 = path[i]
@@ -1105,14 +1116,14 @@ def _path_crosses_node(
             y = y1
             x_min, x_max = min(x1, x2), max(x1, x2)
             if inner_top <= y <= inner_bottom:
-                if _range_overlap(x_min, x_max, inner_left, inner_right) >= 1e-6:
+                if _range_overlap(x_min, x_max, inner_left, inner_right) >= 0.5:
                     return True
 
         elif abs(x1 - x2) < 1e-6:  # vertical segment
             x = x1
             y_min, y_max = min(y1, y2), max(y1, y2)
             if inner_left <= x <= inner_right:
-                if _range_overlap(y_min, y_max, inner_top, inner_bottom) >= 1e-6:
+                if _range_overlap(y_min, y_max, inner_top, inner_bottom) >= 0.5:
                     return True
 
     return False
@@ -1164,40 +1175,60 @@ def _inject_detour(
         dist_above = seg_y1 - top
         dist_below = bottom - seg_y1
         if dist_above >= dist_below:
-            # Route above
+            # Route above the node:
+            #   (seg_x1,seg_y1) -> (mid_x, seg_y1)  [H, continues original y]
+            #   (mid_x, seg_y1) -> (mid_x, top-clearance)  [V, goes up]
+            #   (mid_x, top-clearance) -> (seg_x2, top-clearance)  [H, goes around top]
+            #   (seg_x2, top-clearance) -> (seg_x2, seg_y2)  [V, comes back down]
             detour_y = top - clearance
-            new_path = list(path)
-            insert_idx = crossing_index + 1
-            new_path.insert(insert_idx, (mid_x, detour_y))
-            new_path.insert(insert_idx + 1, (mid_x, top - clearance))
+            new_path = (
+                path[: i + 1]
+                + [(mid_x, seg_y1), (mid_x, detour_y), (seg_x2, detour_y)]
+                + path[i + 2 :]
+            )
             return _snap_path_to_grid(new_path, half=True)
         else:
-            # Route below
+            # Route below the node:
+            #   (seg_x1,seg_y1) -> (mid_x, seg_y1)  [H, continues original y]
+            #   (mid_x, seg_y1) -> (mid_x, bottom+clearance)  [V, goes down]
+            #   (mid_x, bottom+clearance) -> (seg_x2, bottom+clearance)  [H, goes around bottom]
+            #   (seg_x2, bottom+clearance) -> (seg_x2, seg_y2)  [V, comes back up]
             detour_y = bottom + clearance
-            new_path = list(path)
-            insert_idx = crossing_index + 1
-            new_path.insert(insert_idx, (mid_x, detour_y))
-            new_path.insert(insert_idx + 1, (mid_x, bottom + clearance))
+            new_path = (
+                path[: i + 1]
+                + [(mid_x, seg_y1), (mid_x, detour_y), (seg_x2, detour_y)]
+                + path[i + 2 :]
+            )
             return _snap_path_to_grid(new_path, half=True)
     else:  # vertical segment — route left/right
         mid_y = (seg_y1 + seg_y2) / 2.0
         dist_right = left - seg_x1
         dist_left = seg_x1 - right
         if dist_right >= dist_left:
-            # Route right
+            # Route right of the node:
+            #   (seg_x1,seg_y1) -> (seg_x1, mid_y)  [V, continues original x]
+            #   (seg_x1, mid_y) -> (left-clearance, mid_y)  [H, goes left]
+            #   (left-clearance, mid_y) -> (left-clearance, seg_y2)  [V, goes around left edge]
+            #   (left-clearance, seg_y2) -> (seg_x2, seg_y2)  [H, continues original x]
             detour_x = left - clearance
-            new_path = list(path)
-            insert_idx = crossing_index + 1
-            new_path.insert(insert_idx, (detour_x, mid_y))
-            new_path.insert(insert_idx + 1, (left - clearance, mid_y))
+            new_path = (
+                path[: i + 1]
+                + [(seg_x1, mid_y), (detour_x, mid_y), (detour_x, seg_y2)]
+                + path[i + 2 :]
+            )
             return _snap_path_to_grid(new_path, half=True)
         else:
-            # Route left
+            # Route left of the node:
+            #   (seg_x1,seg_y1) -> (seg_x1, mid_y)  [V, continues original x]
+            #   (seg_x1, mid_y) -> (right+clearance, mid_y)  [H, goes right]
+            #   (right+clearance, mid_y) -> (right+clearance, seg_y2)  [V, goes around right edge]
+            #   (right+clearance, seg_y2) -> (seg_x2, seg_y2)  [H, continues original x]
             detour_x = right + clearance
-            new_path = list(path)
-            insert_idx = crossing_index + 1
-            new_path.insert(insert_idx, (detour_x, mid_y))
-            new_path.insert(insert_idx + 1, (right + clearance, mid_y))
+            new_path = (
+                path[: i + 1]
+                + [(seg_x1, mid_y), (detour_x, mid_y), (detour_x, seg_y2)]
+                + path[i + 2 :]
+            )
             return _snap_path_to_grid(new_path, half=True)
 
 
