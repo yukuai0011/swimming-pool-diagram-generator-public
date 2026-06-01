@@ -568,7 +568,85 @@ def _build_connection_paths(
             orientation="vertical",
             min_line_gap=min_line_gap,
         )
+    connection_paths = _avoid_node_intersections(connection_paths, boxes)
     return [_normalize_path(path) for path in connection_paths]
+
+
+def _avoid_node_intersections(
+    connection_paths: list[list[tuple[float, float]]],
+    boxes: dict[str, NodeBox],
+) -> list[list[tuple[float, float]]]:
+    """Reroute horizontal segments that pass through any node's bounding box.
+
+    Connector lines are drawn before the nodes, so any segment that lands
+    inside a node's footprint is visually hidden by the node's white fill.
+    For a wide shape like the Decision diamond, this can hide a large
+    stretch of a cross-lane connector. Detect those segments and insert a
+    small detour (above or below the obstacle) so the line emerges on the
+    other side of the node.
+    """
+    if not boxes:
+        return connection_paths
+
+    grid = _grid_size()
+    if grid <= 0.0:
+        return connection_paths
+    padding = grid
+
+    obstacles: list[tuple[float, float, float, float]] = []
+    for box in boxes.values():
+        half_w = box.width / 2.0
+        half_h = box.height / 2.0
+        obstacles.append(
+            (box.x - half_w, box.y - half_h, box.x + half_w, box.y + half_h)
+        )
+
+    adjusted_paths: list[list[tuple[float, float]]] = []
+    for path in connection_paths:
+        current = list(path)
+        # Iterate until a full pass finds no new collisions. A detour can
+        # itself cross a different node, and the second pass catches that.
+        for _ in range(len(current) * 2):
+            rerouted = _reroute_one_collision(current, obstacles, padding)
+            if rerouted is current:
+                break
+            current = rerouted
+        adjusted_paths.append(current)
+    return adjusted_paths
+
+
+def _reroute_one_collision(
+    path: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float, float]],
+    padding: float,
+) -> list[tuple[float, float]]:
+    for index in range(len(path) - 1):
+        p1 = path[index]
+        p2 = path[index + 1]
+        if abs(p1[1] - p2[1]) >= 1e-6 or abs(p1[0] - p2[0]) < 1e-6:
+            continue
+        y = p1[1]
+        x_min = min(p1[0], p2[0])
+        x_max = max(p1[0], p2[0])
+        for left, top, right, bottom in obstacles:
+            if (
+                y > top + 1e-6
+                and y < bottom - 1e-6
+                and x_min < right - 1e-6
+                and x_max > left + 1e-6
+            ):
+                if (y - top) < (bottom - y):
+                    detour_y = _snap_to_grid(top - padding, half=True)
+                else:
+                    detour_y = _snap_to_grid(bottom + padding, half=True)
+                detour_points = [
+                    (p1[0], y),
+                    (p1[0], detour_y),
+                    (p2[0], detour_y),
+                    (p2[0], y),
+                ]
+                return path[:index] + detour_points + path[index + 2 :]
+    return path
 
 
 def _lane_borders_x(chart_x: float, lane_width: float, lane_count: int) -> list[float]:

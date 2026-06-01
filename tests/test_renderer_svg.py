@@ -218,6 +218,23 @@ connect top --> mid : Down
 connect mid --> bottom : Across
 """
 
+DIAMOND_AVOID_DSL = """swimlaneDiagram
+title Diamond Avoid
+
+lane l1 "Lane 1"
+lane l2 "Lane 2"
+lane l3 "Lane 3"
+lane l4 "Lane 4"
+lane l5 "Lane 5"
+
+node src in l4 decision "Source"
+node blocker in l2 decision "Blocker"
+node dst in l1 process "Destination"
+
+connect src --> dst : Cross Lane
+connect blocker --> dst : Same Row
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -657,6 +674,68 @@ class SvgRendererTests(unittest.TestCase):
         outer_rect = svg.split("\n")[3]
         self.assertNotIn("stroke-dasharray", outer_rect)
 
+    def test_cross_lane_connector_avoids_node_bodies(self) -> None:
+        """Cross-lane connectors must not pass horizontally through a node body.
+
+        Regression test: the diamond (Decision) shape is drawn with a white fill
+        on top of connector lines, so a horizontal segment that lands inside the
+        diamond's y-range visually disappears "underneath" the diamond. The
+        router should add a small detour so the connector runs above or below
+        the obstacle node.
+        """
+        from swimlane_diagram_generator.renderer_svg import _avoid_node_intersections
+
+        diagram = parse_diagram(DIAMOND_AVOID_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        base_lane_width = _compute_lane_width(diagram, lane_index_by_id)
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            base_lane_width,
+            lane_body_y,
+            first_row_offset=66.0,
+            row_gap=144.0,
+        )
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            chart_x=18.0,
+            lane_body_y=lane_body_y,
+            first_row_offset=66.0,
+            row_gap=144.0,
+            node_dimensions=node_dimensions,
+        )
+        raw_paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        adjusted = _avoid_node_intersections(raw_paths, boxes)
+
+        # Collect bounding boxes for the two non-endpoint nodes that act as
+        # potential obstacles on the connector paths.
+        obstacle_ids = {"src", "blocker", "dst"}
+        for path, connection in zip(adjusted, diagram.connections):
+            others = [
+                boxes[node_id]
+                for node_id in obstacle_ids
+                if node_id not in {connection.source, connection.target}
+            ]
+            self.assertFalse(
+                _path_passes_through_any_node(path, others),
+                f"connection {connection.source}->{connection.target} still crosses a node",
+            )
+
     def test_node_text_padding_grows_small_nodes(self):
         """Nodes with short CJK text should be larger than the bare minimum."""
         from swimlane_diagram_generator.renderer_svg import (
@@ -686,6 +765,32 @@ class SvgRendererTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _path_passes_through_any_node(
+    path: list[tuple[float, float]],
+    boxes,
+) -> bool:
+    """Return True if any horizontal segment of ``path`` crosses a node box."""
+    for index in range(len(path) - 1):
+        x1, y1 = path[index]
+        x2, y2 = path[index + 1]
+        if abs(y1 - y2) >= 1e-6 or abs(x1 - x2) < 1e-6:
+            continue
+        y = y1
+        x_min, x_max = min(x1, x2), max(x1, x2)
+        for box in boxes:
+            left = box.x - box.width / 2.0
+            right = box.x + box.width / 2.0
+            top = box.y - box.height / 2.0
+            bottom = box.y + box.height / 2.0
+            if (
+                top + 1e-6 < y < bottom - 1e-6
+                and left + 1e-6 < x_max
+                and right - 1e-6 > x_min
+            ):
+                return True
+    return False
 
 
 def _expand_rect(
