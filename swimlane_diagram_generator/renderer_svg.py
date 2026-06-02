@@ -600,9 +600,12 @@ def _avoid_node_intersections(
     for box in boxes.values():
         half_w = box.width / 2.0
         half_h = box.height / 2.0
-        obstacles.append(
-            (box.x - half_w, box.y - half_h, box.x + half_w, box.y + half_h)
-        )
+        obstacles.append((
+            box.x - half_w,
+            box.y - half_h,
+            box.x + half_w,
+            box.y + half_h,
+        ))
 
     # Seed the occupied-y set with horizontal segments from the original
     # routing so the first detour already sees them.
@@ -659,9 +662,7 @@ def _reroute_one_collision(
                 and x_min < right - 1e-6
                 and x_max > left + 1e-6
             ):
-                detour_y = _pick_detour_y(
-                    y, top, bottom, padding, occupied_y
-                )
+                detour_y = _pick_detour_y(y, top, bottom, padding, occupied_y)
                 if detour_y is None:
                     return path
                 detour_points = [
@@ -1513,10 +1514,28 @@ def _select_best_label_candidate(
     segments_by_connection: list[list[_Segment]],
     padding: float,
 ) -> tuple[LabelPlacement, int, float]:
+    """Pick the best candidate, preferring ones that don't cross foreign lines.
+
+    The previous implementation only short-circuited when a candidate had
+    *zero* overlap with both occupied regions (nodes / other labels) and
+    foreign connector segments. In dense diagrams that rarely happens, so
+    the fallback would still pick a candidate that sits on top of a foreign
+    line — even when another candidate on the opposite side of the path was
+    perfectly clear of lines (it might just kiss a node's edge).
+
+    We now prefer line-clear candidates first, then within that tier we
+    minimize region overlap. When two candidates tie on (line, region)
+    overlap, we keep the one rendered horizontally so the text stays
+    readable. Only when no line-clear candidate exists do we fall back to
+    the previous region-overlap-weighted score.
+    """
     best_candidate = candidates[0]
     best_score = float("inf")
     first_clear_candidate: LabelPlacement | None = None
+    line_clear_candidate: LabelPlacement | None = None
+    line_clear_region_score = float("inf")
     clear_count = 0
+    line_clear_count = 0
 
     for candidate in candidates:
         region_overlap = _overlap_score(candidate, occupied_regions, padding)
@@ -1535,6 +1554,24 @@ def _select_best_label_candidate(
             clear_count += 1
             if first_clear_candidate is None:
                 first_clear_candidate = candidate
+
+        if line_overlap <= 0.0:
+            line_clear_count += 1
+            horizontal_bias = 0.0 if candidate.orientation == "horizontal" else 1.0
+            ranked_score = (region_overlap, horizontal_bias)
+            best_ranked = (
+                line_clear_region_score,
+                0.0
+                if line_clear_candidate is None
+                or line_clear_candidate.orientation == "horizontal"
+                else 1.0,
+            )
+            if line_clear_candidate is None or ranked_score < best_ranked:
+                line_clear_region_score = region_overlap
+                line_clear_candidate = candidate
+
+    if line_clear_candidate is not None:
+        return line_clear_candidate, line_clear_count, line_clear_region_score
 
     if first_clear_candidate is not None:
         return first_clear_candidate, clear_count, 0.0

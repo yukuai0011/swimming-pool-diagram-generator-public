@@ -17,6 +17,7 @@ from swimlane_diagram_generator.renderer_svg import (
     _label_anchor,
     _resolve_layout_tuning,
     _shape_size,
+    _snap_to_grid,
     get_global_min_line_gap,
     render_svg,
     set_global_min_line_gap,
@@ -716,6 +717,93 @@ class SvgRendererTests(unittest.TestCase):
                 f"label '{placement.text}' padding overlaps connector segments: {collisions}",
             )
 
+    def test_label_avoids_foreign_lines_under_dense_layout(self) -> None:
+        """Labels should never sit on top of a foreign connector segment.
+
+        Regression test for the dense stress-test layout: the 'Cross A' label
+        for ``n2 -> doc1`` had its leader line on a vertical segment that
+        ran parallel to the d1 -> n1 connector only 30px away. The previous
+        placement function would accept a 60px overlap with that foreign
+        line because no candidate was perfectly clear of *every* occupied
+        region. The new selector prefers line-clear candidates first, even
+        if they slightly overlap a node, so the label no longer paints over
+        the d1 -> n1 line.
+        """
+        diagram = parse_diagram(STRESS_TEST_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        grid_size = get_global_min_line_gap()
+        max_node_height = max(
+            (size[1] for size in node_dimensions.values()), default=74.0
+        )
+        first_row_offset = _snap_to_grid(
+            max(54.0, max_node_height / 2 + 24.0), half=True
+        )
+        row_gap = _snap_to_grid(
+            max(104.0, max_node_height + max(24.0, grid_size * 1.2)), half=True
+        )
+        lane_body_y = _snap_to_grid(18.0 + 48.0 + 40.0, half=True)
+        lane_width = _compute_lane_width(
+            diagram, lane_index_by_id, node_dimensions=node_dimensions
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        placements = _compute_label_placements(diagram, paths, boxes)
+
+        padding = get_global_min_line_gap()
+        for placement in placements.values():
+            rect = _placement_occupied_rect(placement, padding)
+            own_path = set(paths[placement.connection_index])
+            for line_index, path in enumerate(paths):
+                if line_index == placement.connection_index:
+                    continue
+                # Skip connections that trace the exact same line in the
+                # opposite direction (e.g. ``A -> B`` and ``B -> A``); their
+                # segments coincide with the line the label is attached to
+                # and aren't actually foreign obstacles.
+                if set(path) == own_path:
+                    continue
+                for segment in _build_segments(path, line_index):
+                    overlap = _segment_overlap_length(segment, rect)
+                    self.assertEqual(
+                        overlap,
+                        0.0,
+                        f"label '{placement.text}' (connection "
+                        f"{placement.connection_index}) overlaps foreign "
+                        f"segment from connection {line_index}: "
+                        f"({segment.x1}, {segment.y1}) -> "
+                        f"({segment.x2}, {segment.y2}) by {overlap}px",
+                    )
+
     def test_internal_lane_separators_are_dotted(self) -> None:
         diagram = parse_diagram(RENDER_DSL)
         svg = render_svg(diagram)
@@ -912,8 +1000,16 @@ def _horizontal_overlap(
     Returns 0.0 if the two paths have no horizontal segments at the same
     y-coordinate whose x-ranges overlap.
     """
-    segments_a = [s for s in (_horizontal_segment(path_a, i) for i in range(len(path_a) - 1)) if s is not None]
-    segments_b = [s for s in (_horizontal_segment(path_b, i) for i in range(len(path_b) - 1)) if s is not None]
+    segments_a = [
+        s
+        for s in (_horizontal_segment(path_a, i) for i in range(len(path_a) - 1))
+        if s is not None
+    ]
+    segments_b = [
+        s
+        for s in (_horizontal_segment(path_b, i) for i in range(len(path_b) - 1))
+        if s is not None
+    ]
     best = 0.0
     for ya, xa_min, xa_max in segments_a:
         for yb, xb_min, xb_max in segments_b:
