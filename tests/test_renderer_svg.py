@@ -235,6 +235,59 @@ connect src --> dst : Cross Lane
 connect blocker --> dst : Same Row
 """
 
+STRESS_TEST_DSL = """swimlaneDiagram
+title Stress Test: Dense Multi-Lane Flow
+
+lane l1 "Lane 1"
+lane l2 "Lane 2"
+lane l3 "Lane 3"
+lane l4 "Lane 4"
+lane l5 "Lane 5"
+
+node s1 in l1 [start/end] "Start"
+node n1 in l1 process "Node 1"
+node n2 in l2 process "Node 2"
+node n3 in l3 process "Node 3"
+node n4 in l4 process "Node 4"
+node n5 in l5 process "Node 5"
+node d1 in l2 decision "Decision 1"
+node d2 in l4 decision "Decision 2"
+node sub1 in l3 subprocess "Subprocess 1"
+node sub2 in l5 subprocess "Subprocess 2"
+node doc1 in l1 document "Doc 1"
+node doc2 in l3 document "Doc 2"
+node data1 in l2 data "Data 1"
+node data2 in l5 data "Data 2"
+node e1 in l1 [start/end] "End 1"
+node e2 in l5 [start/end] "End 2"
+
+connect s1 --> n1
+connect n1 --> n2
+connect n2 --> d1
+connect d1 -->|Yes| n3
+connect d1 -->|No| n1
+connect n3 --> sub1
+connect sub1 --> n4
+connect n4 --> d2
+connect d2 -->|Pass| n5
+connect d2 -->|Fail| n3
+connect n2 --> doc1 : Cross A
+connect sub1 --> doc2 : Cross B
+connect n4 --> data1 : Cross C
+connect n5 --> data2 : Cross D
+connect n1 --> e1 : Long Span 1
+connect sub1 --> e2 : Long Span 2
+connect n3 --> n5
+connect doc2 --> n5 : Merge Path
+connect data1 --> n5
+connect data2 --> n5
+connect n5 --> sub2
+connect sub2 --> e2
+connect d2 --> doc1 : Extra Cross 1
+connect sub2 --> n2 : Extra Cross 2
+connect doc1 --> data2 : Extra Cross 3
+"""
+
 
 class SvgRendererTests(unittest.TestCase):
     def test_render_svg_contains_expected_elements(self) -> None:
@@ -736,6 +789,63 @@ class SvgRendererTests(unittest.TestCase):
                 f"connection {connection.source}->{connection.target} still crosses a node",
             )
 
+    def test_multiple_detours_around_same_node_do_not_overlap(self) -> None:
+        """Two detours around the same obstacle must not share a y-coordinate
+        in their overlapping x-range. Otherwise the lines would be drawn on
+        top of each other after the node-avoidance reroute.
+        """
+        from swimlane_diagram_generator.renderer_svg import _avoid_node_intersections
+
+        diagram = parse_diagram(STRESS_TEST_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        base_lane_width = _compute_lane_width(diagram, lane_index_by_id)
+        lane_body_y = 18.0 + 48.0 + 40.0
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            base_lane_width,
+            lane_body_y,
+            first_row_offset=66.0,
+            row_gap=144.0,
+        )
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            chart_x=18.0,
+            lane_body_y=lane_body_y,
+            first_row_offset=66.0,
+            row_gap=144.0,
+            node_dimensions=node_dimensions,
+        )
+        raw_paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        adjusted = _avoid_node_intersections(raw_paths, boxes)
+
+        # Verify no two horizontal segments from different connections share
+        # both y-coordinate and overlapping x-range.
+        for index_a, path_a in enumerate(adjusted):
+            for index_b, path_b in enumerate(adjusted):
+                if index_b <= index_a:
+                    continue
+                overlap = _horizontal_overlap(path_a, path_b)
+                self.assertEqual(
+                    overlap,
+                    0.0,
+                    f"paths {index_a} and {index_b} share {overlap}px of horizontal overlap",
+                )
+
     def test_node_text_padding_grows_small_nodes(self):
         """Nodes with short CJK text should be larger than the bare minimum."""
         from swimlane_diagram_generator.renderer_svg import (
@@ -791,6 +901,39 @@ def _path_passes_through_any_node(
             ):
                 return True
     return False
+
+
+def _horizontal_overlap(
+    path_a: list[tuple[float, float]],
+    path_b: list[tuple[float, float]],
+) -> float:
+    """Return the longest shared length of any pair of horizontal segments.
+
+    Returns 0.0 if the two paths have no horizontal segments at the same
+    y-coordinate whose x-ranges overlap.
+    """
+    segments_a = [s for s in (_horizontal_segment(path_a, i) for i in range(len(path_a) - 1)) if s is not None]
+    segments_b = [s for s in (_horizontal_segment(path_b, i) for i in range(len(path_b) - 1)) if s is not None]
+    best = 0.0
+    for ya, xa_min, xa_max in segments_a:
+        for yb, xb_min, xb_max in segments_b:
+            if abs(ya - yb) >= 1e-6:
+                continue
+            overlap = min(xa_max, xb_max) - max(xa_min, xb_min)
+            if overlap > best:
+                best = overlap
+    return best
+
+
+def _horizontal_segment(
+    path: list[tuple[float, float]], index: int
+) -> tuple[float, float, float] | None:
+    """Return ``(y, x_min, x_max)`` for a horizontal segment, else None."""
+    x1, y1 = path[index]
+    x2, y2 = path[index + 1]
+    if abs(y1 - y2) >= 1e-6 or abs(x1 - x2) < 1e-6:
+        return None
+    return y1, min(x1, x2), max(x1, x2)
 
 
 def _expand_rect(

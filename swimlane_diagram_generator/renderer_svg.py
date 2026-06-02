@@ -583,7 +583,10 @@ def _avoid_node_intersections(
     For a wide shape like the Decision diamond, this can hide a large
     stretch of a cross-lane connector. Detect those segments and insert a
     small detour (above or below the obstacle) so the line emerges on the
-    other side of the node.
+    other side of the node. The detour y-coordinate is chosen from any
+    horizontal grid line that is (a) outside the obstacle's y-range and
+    (b) not already in use by another connection, so multiple detours
+    around the same obstacle do not overlap each other.
     """
     if not boxes:
         return connection_paths
@@ -601,24 +604,45 @@ def _avoid_node_intersections(
             (box.x - half_w, box.y - half_h, box.x + half_w, box.y + half_h)
         )
 
+    # Seed the occupied-y set with horizontal segments from the original
+    # routing so the first detour already sees them.
+    occupied_y: set[float] = set()
+    for path in connection_paths:
+        for index in range(len(path) - 1):
+            p1 = path[index]
+            p2 = path[index + 1]
+            if abs(p1[1] - p2[1]) < 1e-6 and abs(p1[0] - p2[0]) >= 1e-6:
+                occupied_y.add(_snap_to_grid(p1[1], half=True))
+
     adjusted_paths: list[list[tuple[float, float]]] = []
     for path in connection_paths:
         current = list(path)
-        # Iterate until a full pass finds no new collisions. A detour can
-        # itself cross a different node, and the second pass catches that.
         for _ in range(len(current) * 2):
-            rerouted = _reroute_one_collision(current, obstacles, padding)
+            rerouted = _reroute_one_collision(current, obstacles, padding, occupied_y)
             if rerouted is current:
                 break
+            _record_horizontal_ys(rerouted, occupied_y)
             current = rerouted
         adjusted_paths.append(current)
     return adjusted_paths
+
+
+def _record_horizontal_ys(
+    path: list[tuple[float, float]],
+    occupied_y: set[float],
+) -> None:
+    for index in range(len(path) - 1):
+        p1 = path[index]
+        p2 = path[index + 1]
+        if abs(p1[1] - p2[1]) < 1e-6 and abs(p1[0] - p2[0]) >= 1e-6:
+            occupied_y.add(_snap_to_grid(p1[1], half=True))
 
 
 def _reroute_one_collision(
     path: list[tuple[float, float]],
     obstacles: list[tuple[float, float, float, float]],
     padding: float,
+    occupied_y: set[float],
 ) -> list[tuple[float, float]]:
     for index in range(len(path) - 1):
         p1 = path[index]
@@ -635,10 +659,11 @@ def _reroute_one_collision(
                 and x_min < right - 1e-6
                 and x_max > left + 1e-6
             ):
-                if (y - top) < (bottom - y):
-                    detour_y = _snap_to_grid(top - padding, half=True)
-                else:
-                    detour_y = _snap_to_grid(bottom + padding, half=True)
+                detour_y = _pick_detour_y(
+                    y, top, bottom, padding, occupied_y
+                )
+                if detour_y is None:
+                    return path
                 detour_points = [
                     (p1[0], y),
                     (p1[0], detour_y),
@@ -647,6 +672,46 @@ def _reroute_one_collision(
                 ]
                 return path[:index] + detour_points + path[index + 2 :]
     return path
+
+
+def _pick_detour_y(
+    original_y: float,
+    top: float,
+    bottom: float,
+    padding: float,
+    occupied_y: set[float],
+) -> float | None:
+    """Pick a free y-coordinate for the detour.
+
+    Prefers the side of the obstacle closest to the original segment. If
+    that side is already in use by another connection's horizontal segment,
+    tries the opposite side. If both are taken, walks outward in additional
+    grid steps until a free line is found.
+    """
+    candidates: list[float] = []
+    primary_above = (original_y - top) < (bottom - original_y)
+    if primary_above:
+        candidates.append(_snap_to_grid(top - padding, half=True))
+        candidates.append(_snap_to_grid(bottom + padding, half=True))
+    else:
+        candidates.append(_snap_to_grid(bottom + padding, half=True))
+        candidates.append(_snap_to_grid(top - padding, half=True))
+
+    for step in range(2, 12):
+        if primary_above:
+            candidates.append(_snap_to_grid(top - step * padding, half=True))
+            candidates.append(_snap_to_grid(bottom + step * padding, half=True))
+        else:
+            candidates.append(_snap_to_grid(bottom + step * padding, half=True))
+            candidates.append(_snap_to_grid(top - step * padding, half=True))
+
+    for candidate in candidates:
+        if abs(candidate - original_y) < 1e-6:
+            continue
+        if candidate in occupied_y:
+            continue
+        return candidate
+    return None
 
 
 def _lane_borders_x(chart_x: float, lane_width: float, lane_count: int) -> list[float]:
