@@ -1016,8 +1016,7 @@ def _horizontal_overlap(
             if abs(ya - yb) >= 1e-6:
                 continue
             overlap = min(xa_max, xb_max) - max(xa_min, xb_min)
-            if overlap > best:
-                best = overlap
+            best = max(best, overlap)
     return best
 
 
