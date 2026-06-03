@@ -137,7 +137,10 @@ def render_svg(diagram: Diagram) -> str:
     )
     body_height = max(
         320.0,
-        first_row_offset + max(slot_count - 1, 0) * row_gap + max_node_height + 52.0,
+        first_row_offset
+        + max(slot_count - 1, 0) * row_gap
+        + max_node_height / 2.0
+        + 24.0,
     )
     body_height = _snap_to_grid(body_height, half=True)
 
@@ -1909,29 +1912,52 @@ def _vertical_label_lines(label_text: str) -> list[str]:
 
     has_cjk = any("\u4e00" <= char <= "\u9fff" for char in text)
     if has_cjk:
-        lines = [char for char in text if char != " "]
-        return lines or [text]
+        chars = [char for char in text if char != " "]
+        if not chars:
+            return [text]
+        # For very short CJK labels, one character per line reads well. For
+        # longer labels, group into 2-character chunks so a 5-character word
+        # like "\u8865\u4ef6\u540e\u91cd\u63d0" stacks as 3 lines (\u8865\u4ef6 / \u540e\u91cd / \u63d0) rather than
+        # 5 \u2014 keeping the label compact without dropping readability.
+        if len(chars) <= 3:
+            return chars
+        return ["".join(chars[index : index + 2]) for index in range(0, len(chars), 2)]
 
     words = [word for word in text.split(" ") if word]
     if len(words) >= 2:
         return words
 
     token = words[0] if words else text
-    chunk_size = 3
-    return [
-        token[index : index + chunk_size] for index in range(0, len(token), chunk_size)
-    ]
+    # Keep short Latin words whole ("Pass", "Yes", "Fail") instead of
+    # splitting them into awkward 3-character chunks like "Pas" + "s".
+    if len(token) <= 4:
+        return [token]
+    return [token[index : index + 2] for index in range(0, len(token), 2)]
 
 
 def _text_capacity(box: NodeBox) -> int:
-    return _text_capacity_for_dimensions(box.shape, box.width)
+    return _text_capacity_for_dimensions(box.shape, box.width, _grid_size())
 
 
-def _text_capacity_for_dimensions(shape: Shape, width: float) -> int:
+def _text_capacity_for_dimensions(
+    shape: Shape, width: float, grid_size: float | None = None
+) -> int:
+    """Max characters that fit on a single line of a node of the given shape.
+
+    The formula intentionally matches the one used by
+    :func:`_fit_text_in_grid_units` when sizing the node, so the text we
+    render at draw time uses the same wrap width the size loop used to
+    decide the box dimensions. A previous version subtracted a much
+    larger padding (20 + 2*NODE_TEXT_PAD_H = 36px) and produced a smaller
+    capacity than the sizer, which is why the rendered text was being
+    wrapped onto a second line ("Subproc" / "ess 1") even though the
+    dimensions had been grown to fit the whole label.
+    """
+    if grid_size is None:
+        grid_size = _grid_size()
     width_factor, _ = _shape_text_box_factors(shape)
-    width *= width_factor
-    width = max(48.0, width - 20.0 - NODE_TEXT_PAD_H * 2)
-    return max(4, int(width / 7.2))
+    text_box_width = max(24.0, width * width_factor - grid_size * 0.5)
+    return max(4, int(text_box_width / 7.2))
 
 
 def _wrap_text(text: str, max_chars: int) -> list[str]:
