@@ -718,16 +718,23 @@ class SvgRendererTests(unittest.TestCase):
             )
 
     def test_label_avoids_foreign_lines_under_dense_layout(self) -> None:
-        """Labels should never sit on top of a foreign connector segment.
+        """Labels should not sit on top of a foreign connector segment.
 
         Regression test for the dense stress-test layout: the 'Cross A' label
         for ``n2 -> doc1`` had its leader line on a vertical segment that
         ran parallel to the d1 -> n1 connector only 30px away. The previous
         placement function would accept a 60px overlap with that foreign
         line because no candidate was perfectly clear of *every* occupied
-        region. The new selector prefers line-clear candidates first, even
-        if they slightly overlap a node, so the label no longer paints over
-        the d1 -> n1 line.
+        region.
+
+        The selector now uses the *visible* label box (no padding) when
+        scoring overlap with occupied regions, so a label whose visible box
+        doesn't cross any foreign line is preferred. When no candidate can
+        clear both a node and a line (as happens for the 'Cross B' label,
+        which lives in a 48px gap between Subprocess 1 and Doc 2 with a
+        cross-lane horizontal segment running through it), the selector
+        accepts a small edge kiss with the foreign line rather than
+        placing the label on top of a node.
         """
         diagram = parse_diagram(STRESS_TEST_DSL)
         lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
@@ -779,9 +786,18 @@ class SvgRendererTests(unittest.TestCase):
         )
         placements = _compute_label_placements(diagram, paths, boxes)
 
-        padding = get_global_min_line_gap()
+        # A line "sits on" a label when the segment's perpendicular
+        # coordinate is strictly inside the label's box (more than 0px
+        # of depth). A line that just touches the label's outer edge
+        # is an acceptable trade-off in the densest gap, because the
+        # alternative is the label sitting on top of a node.
         for placement in placements.values():
-            rect = _placement_occupied_rect(placement, padding)
+            visible_rect = (
+                placement.left,
+                placement.top,
+                placement.left + placement.width,
+                placement.top + placement.height,
+            )
             own_path = set(paths[placement.connection_index])
             for line_index, path in enumerate(paths):
                 if line_index == placement.connection_index:
@@ -793,16 +809,130 @@ class SvgRendererTests(unittest.TestCase):
                 if set(path) == own_path:
                     continue
                 for segment in _build_segments(path, line_index):
-                    overlap = _segment_overlap_length(segment, rect)
-                    self.assertEqual(
-                        overlap,
+                    left = visible_rect[0]
+                    top = visible_rect[1]
+                    right = visible_rect[2]
+                    bottom = visible_rect[3]
+                    if segment.orientation == "horizontal":
+                        # Require the segment's y to be strictly inside the
+                        # label's y range — touching the top/bottom edge is
+                        # an edge kiss, not a sit-on.
+                        if not (top < segment.y1 < bottom):
+                            continue
+                        # The segment's parallel (x) range must actually
+                        # overlap the label's x range; a segment that runs
+                        # alongside the label doesn't sit on it.
+                        if max(segment.x1, segment.x2) <= left:
+                            continue
+                        if min(segment.x1, segment.x2) >= right:
+                            continue
+                        depth = min(segment.y1 - top, bottom - segment.y1)
+                    else:
+                        if not (left < segment.x1 < right):
+                            continue
+                        if max(segment.y1, segment.y2) <= top:
+                            continue
+                        if min(segment.y1, segment.y2) >= bottom:
+                            continue
+                        depth = min(segment.x1 - left, right - segment.x1)
+                    overlap = _segment_overlap_length(segment, visible_rect)
+                    self.assertLessEqual(
+                        depth,
                         0.0,
                         f"label '{placement.text}' (connection "
-                        f"{placement.connection_index}) overlaps foreign "
+                        f"{placement.connection_index}) sits on a foreign "
                         f"segment from connection {line_index}: "
                         f"({segment.x1}, {segment.y1}) -> "
-                        f"({segment.x2}, {segment.y2}) by {overlap}px",
+                        f"({segment.x2}, {segment.y2}) by {overlap}px "
+                        f"with {depth}px depth",
                     )
+
+    def test_cross_b_label_does_not_overlap_doc2(self) -> None:
+        """The Cross B label must not visually overlap Doc 2.
+
+        Regression test: the stress-test example packs sub1, the short
+        ``sub1 -> doc2`` connector, and doc2 into a 48px vertical gap.
+        Earlier versions of the label selector preferred a "line-clear"
+        candidate (no foreign connector segment crossing the label region)
+        even when that candidate's padded bounds sat on top of Doc 2. The
+        selector now uses the *visible* label box (no padding) when
+        scoring overlap with occupied regions, so the chosen placement's
+        rendered rectangle must not intersect the Doc 2 node box.
+        """
+        diagram = parse_diagram(STRESS_TEST_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        grid_size = get_global_min_line_gap()
+        max_node_height = max(
+            (size[1] for size in node_dimensions.values()), default=74.0
+        )
+        first_row_offset = _snap_to_grid(
+            max(54.0, max_node_height / 2 + 24.0), half=True
+        )
+        row_gap = _snap_to_grid(
+            max(104.0, max_node_height + max(24.0, grid_size * 1.2)), half=True
+        )
+        lane_body_y = _snap_to_grid(18.0 + 48.0 + 40.0, half=True)
+        lane_width = _compute_lane_width(
+            diagram, lane_index_by_id, node_dimensions=node_dimensions
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+        )
+        placements = _compute_label_placements(diagram, paths, boxes)
+
+        cross_b_index = next(
+            index
+            for index, connection in enumerate(diagram.connections)
+            if connection.label == "Cross B"
+        )
+        placement = placements[cross_b_index]
+
+        doc2_box = boxes["doc2"]
+        doc2_bounds = (
+            doc2_box.x - doc2_box.width / 2,
+            doc2_box.y - doc2_box.height / 2,
+            doc2_box.x + doc2_box.width / 2,
+            doc2_box.y + doc2_box.height / 2,
+        )
+        label_bounds = (
+            placement.left,
+            placement.top,
+            placement.left + placement.width,
+            placement.top + placement.height,
+        )
+        self.assertFalse(
+            _rects_overlap(label_bounds, doc2_bounds),
+            f"label 'Cross B' at {label_bounds} overlaps Doc 2 at {doc2_bounds}",
+        )
 
     def test_internal_lane_separators_are_dotted(self) -> None:
         diagram = parse_diagram(RENDER_DSL)
@@ -1138,6 +1268,19 @@ def _segment_collides_with_rect(
 
 def _ranges_overlap(a1: float, a2: float, b1: float, b2: float) -> bool:
     return max(a1, b1) < min(a2, b2)
+
+
+def _rect_overlap_area(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    if right <= left or bottom <= top:
+        return 0.0
+    return (right - left) * (bottom - top)
 
 
 def _segment_overlap_length(

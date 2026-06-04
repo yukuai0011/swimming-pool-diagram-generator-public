@@ -1517,69 +1517,61 @@ def _select_best_label_candidate(
     segments_by_connection: list[list[_Segment]],
     padding: float,
 ) -> tuple[LabelPlacement, int, float]:
-    """Pick the best candidate, preferring ones that don't cross foreign lines.
+    """Pick the best candidate, preferring ones that don't overlap nodes.
 
-    The previous implementation only short-circuited when a candidate had
-    *zero* overlap with both occupied regions (nodes / other labels) and
-    foreign connector segments. In dense diagrams that rarely happens, so
-    the fallback would still pick a candidate that sits on top of a foreign
-    line — even when another candidate on the opposite side of the path was
-    perfectly clear of lines (it might just kiss a node's edge).
+    The previous implementation short-circuited to the *line-clear* tier
+    (no foreign connector segment crossing the label region) even when that
+    tier's region overlap with a node was huge. In dense layouts that
+    caused labels to land on top of a node just to avoid a small line
+    kiss (e.g. the "Cross B" label sitting under Doc 2 in the stress-test
+    example).
 
-    We now prefer line-clear candidates first, then within that tier we
-    minimize region overlap. When two candidates tie on (line, region)
-    overlap, we keep the one rendered horizontally so the text stays
-    readable. Only when no line-clear candidate exists do we fall back to
-    the previous region-overlap-weighted score.
+    We now sort by region overlap first — a label on top of a node is far
+    more visible than one crossing a thin line, so it should always lose.
+    Within a given region-overlap tier we then prefer line-clear
+    candidates. If multiple candidates remain tied we keep the
+    horizontally rendered one (more readable) and finally the first one
+    encountered so the placement is stable.
     """
-    best_candidate = candidates[0]
-    best_score = float("inf")
+    scored: list[
+        tuple[tuple[float, float, float, int], LabelPlacement, float, float]
+    ] = []
     first_clear_candidate: LabelPlacement | None = None
-    line_clear_candidate: LabelPlacement | None = None
-    line_clear_region_score = float("inf")
     clear_count = 0
-    line_clear_count = 0
 
-    for candidate in candidates:
-        region_overlap = _overlap_score(candidate, occupied_regions, padding)
+    for index, candidate in enumerate(candidates):
+        region_overlap = _overlap_score(candidate, occupied_regions)
         line_overlap = _foreign_line_overlap_score(
             candidate,
             segments_by_connection,
             padding,
         )
-        score = region_overlap * 10000.0 + line_overlap
-
-        if score < best_score:
-            best_score = score
-            best_candidate = candidate
-
         if region_overlap <= 0.0 and line_overlap <= 0.0:
             clear_count += 1
             if first_clear_candidate is None:
                 first_clear_candidate = candidate
 
-        if line_overlap <= 0.0:
-            line_clear_count += 1
-            horizontal_bias = 0.0 if candidate.orientation == "horizontal" else 1.0
-            ranked_score = (region_overlap, horizontal_bias)
-            best_ranked = (
-                line_clear_region_score,
-                0.0
-                if line_clear_candidate is None
-                or line_clear_candidate.orientation == "horizontal"
-                else 1.0,
+        # Sort key: (region_overlap, line_overlap, horizontal_bias, encounter).
+        # Lower is better, so an entirely-clear candidate sorts before one
+        # that overlaps a node, and a horizontally rendered label breaks
+        # ties in favour of readability.
+        horizontal_bias = 0.0 if candidate.orientation == "horizontal" else 1.0
+        scored.append(
+            (
+                (region_overlap, line_overlap, horizontal_bias, index),
+                candidate,
+                region_overlap,
+                line_overlap,
             )
-            if line_clear_candidate is None or ranked_score < best_ranked:
-                line_clear_region_score = region_overlap
-                line_clear_candidate = candidate
+        )
 
-    if line_clear_candidate is not None:
-        return line_clear_candidate, line_clear_count, line_clear_region_score
+    scored.sort(key=lambda item: item[0])
 
     if first_clear_candidate is not None:
         return first_clear_candidate, clear_count, 0.0
 
-    return best_candidate, clear_count, best_score
+    _, best_candidate, best_region, best_line = scored[0]
+    return best_candidate, clear_count, best_region * 10000.0 + best_line
 
 
 def _foreign_line_overlap_score(
@@ -1883,9 +1875,20 @@ def _label_occupied_bounds(
 def _overlap_score(
     candidate: LabelPlacement,
     occupied_regions: list[tuple[float, float, float, float]],
-    padding: float,
 ) -> float:
-    candidate_region = _label_occupied_bounds(candidate, padding)
+    # Region (node / previously-placed label) overlap is computed against the
+    # *visible* label box. The padding around the box is only relevant for line
+    # clearance (see ``_foreign_line_overlap_score``); using it here would
+    # forbid labels from sitting in a tight gap between two nodes even when
+    # the actual rendered text box doesn't intersect either node, which is
+    # what caused the "Cross B" label to slide under Doc 2 in the stress-test
+    # example.
+    candidate_region = (
+        candidate.left,
+        candidate.top,
+        candidate.left + candidate.width,
+        candidate.top + candidate.height,
+    )
     total_overlap = 0.0
     for occupied in occupied_regions:
         total_overlap += _rect_overlap_area(candidate_region, occupied)
