@@ -934,6 +934,132 @@ class SvgRendererTests(unittest.TestCase):
             f"label 'Cross B' at {label_bounds} overlaps Doc 2 at {doc2_bounds}",
         )
 
+    def test_label_margin_avoids_foreign_lines_under_dense_layout(self) -> None:
+        """Labels must not allow foreign connector segments to cross their margin.
+
+        Regression test: the Cross B label in the stress-test example had
+        its leader line going from the connection to the label rect, with
+        the margin (12px around the label) being the space where the leader
+        line lives. Two foreign connector segments (Extra Cross 1 and
+        Extra Cross 3) crossed that margin and visually overlapped with
+        the leader line at its endpoints.
+
+        The previous design said the label should have a margin and the
+        leader line should use the margin space; foreign connector
+        segments must not enter the margin. The renderer re-routes
+        foreign lines around the margin so the leader line can live in it
+        without visual overlap.
+
+        An edge kiss (a foreign segment's perpendicular coordinate sits
+        exactly on the margin's outer edge) is acceptable in the densest
+        gaps where no free grid line is available; the alternative is the
+        foreign segment crossing the margin with a deep overlap, which
+        is what we are guarding against.
+        """
+        from swimlane_diagram_generator.renderer_svg import (
+            _avoid_label_margin_intersections,
+            _lane_borders_x,
+        )
+
+        diagram = parse_diagram(STRESS_TEST_DSL)
+        lane_index_by_id = {lane.id: lane.index for lane in diagram.lanes}
+        slot_by_node, _ = _assign_vertical_slots(diagram, lane_index_by_id)
+        node_dimensions = _compute_node_dimensions(
+            diagram, lane_index_by_id, slot_by_node
+        )
+        grid_size = get_global_min_line_gap()
+        max_node_height = max(
+            (size[1] for size in node_dimensions.values()), default=74.0
+        )
+        first_row_offset = _snap_to_grid(
+            max(54.0, max_node_height / 2 + 24.0), half=True
+        )
+        row_gap = _snap_to_grid(
+            max(104.0, max_node_height + max(24.0, grid_size * 1.2)),
+            half=True,
+        )
+        lane_body_y = _snap_to_grid(18.0 + 48.0 + 40.0, half=True)
+        lane_width = _compute_lane_width(
+            diagram, lane_index_by_id, node_dimensions=node_dimensions
+        )
+        lane_width, incident_step, cross_y_step = _resolve_layout_tuning(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        boxes = _build_boxes(
+            diagram,
+            lane_index_by_id,
+            slot_by_node,
+            lane_width,
+            18.0,
+            lane_body_y,
+            first_row_offset,
+            row_gap,
+            node_dimensions=node_dimensions,
+        )
+        lane_borders_x = _lane_borders_x(18.0, lane_width, len(diagram.lanes))
+        paths = _build_connection_paths(
+            diagram,
+            boxes,
+            lane_index_by_id,
+            incident_step=incident_step,
+            cross_y_step=cross_y_step,
+            lane_borders_x=lane_borders_x,
+        )
+        placements = _compute_label_placements(diagram, paths, boxes)
+        adjusted_paths = _avoid_label_margin_intersections(
+            paths, placements, grid_size
+        )
+
+        padding = grid_size
+        for placement in placements.values():
+            margin = _placement_occupied_rect(placement, padding)
+            own_path = set(paths[placement.connection_index])
+            collisions = []
+            for line_index, path in enumerate(adjusted_paths):
+                if line_index == placement.connection_index:
+                    continue
+                # Skip connections that trace the exact same line in the
+                # opposite direction; their segments coincide with the
+                # line the label is attached to.
+                if set(path) == own_path:
+                    continue
+                for segment in _build_segments(path, line_index):
+                    # Edge kiss is allowed: the segment's perpendicular
+                    # coordinate must be strictly inside the margin
+                    # (more than 0px of depth).
+                    if segment.orientation == "horizontal":
+                        if not (margin[1] < segment.y1 < margin[3]):
+                            continue
+                        if max(segment.x1, segment.x2) <= margin[0]:
+                            continue
+                        if min(segment.x1, segment.x2) >= margin[2]:
+                            continue
+                    else:
+                        if not (margin[0] < segment.x1 < margin[2]):
+                            continue
+                        if max(segment.y1, segment.y2) <= margin[1]:
+                            continue
+                        if min(segment.y1, segment.y2) >= margin[3]:
+                            continue
+                    overlap = _segment_overlap_length(segment, margin)
+                    collisions.append((
+                        line_index,
+                        (segment.x1, segment.y1, segment.x2, segment.y2),
+                        overlap,
+                    ))
+            self.assertFalse(
+                collisions,
+                f"label '{placement.text}' margin at {margin} is "
+                f"violated by foreign connector segments: {collisions}",
+            )
+
     def test_internal_lane_separators_are_dotted(self) -> None:
         diagram = parse_diagram(RENDER_DSL)
         svg = render_svg(diagram)

@@ -187,6 +187,16 @@ def render_svg(diagram: Diagram) -> str:
     line_jumps = _compute_line_jumps(connection_paths)
     label_placements = _compute_label_placements(diagram, connection_paths, boxes)
 
+    # The leader line of each label lives inside the label's margin
+    # (12px around the rect). Re-route any foreign connector segment
+    # that crosses that margin so the leader line can sit in it without
+    # visually overlapping another line. Recompute line jumps afterwards
+    # because the rerouted paths may cross other lines at new points.
+    connection_paths = _avoid_label_margin_intersections(
+        connection_paths, label_placements, grid_size
+    )
+    line_jumps = _compute_line_jumps(connection_paths)
+
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(svg_width)}" height="{_fmt(svg_height)}" '
         f'viewBox="0 0 {_fmt(svg_width)} {_fmt(svg_height)}">',
@@ -573,6 +583,104 @@ def _build_connection_paths(
         )
     connection_paths = _avoid_node_intersections(connection_paths, boxes)
     return [_normalize_path(path) for path in connection_paths]
+
+
+def _avoid_label_margin_intersections(
+    connection_paths: list[list[tuple[float, float]]],
+    label_placements: dict[int, LabelPlacement],
+    grid: float,
+) -> list[list[tuple[float, float]]]:
+    """Re-route connector paths around label margins.
+
+    Each label reserves a margin (the rectangle around it plus
+    ``grid``-sized padding) where the leader line lives. Foreign
+    connector segments that cross this margin visually overlap the
+    leader line, which the design forbids — the margin is supposed to
+    be free of foreign lines so the leader line can sit inside it
+    without colliding with anything.
+
+    This treats every label margin as a rectangular obstacle and runs
+    the same per-path rerouting loop that ``_avoid_node_intersections``
+    uses for node bodies: any horizontal segment that lands strictly
+    inside a margin is rerouted to a free grid line just outside the
+    margin. The leader line of a label is allowed to live inside its
+    own margin (the leader line goes from the connection anchor on the
+    path to the attach point at the corner of the label rect), so
+    each path is permitted to cross its own label's margin but is
+    rerouted away from every other label's margin. Paths that cannot
+    find a free grid line (e.g. dense, fully-booked horizontal
+    channels) are left untouched as a last-resort fallback.
+    """
+    if not label_placements:
+        return connection_paths
+
+    padding = grid
+    if padding <= 0.0:
+        return connection_paths
+
+    # Map each connection that owns a label to its margin. The path
+    # for connection ``ci`` is allowed to cross ``own_margin[ci]``
+    # (that's where the leader line lives) but not any other margin.
+    own_margin_by_connection: dict[int, tuple[float, float, float, float]] = {
+        placement.connection_index: _label_occupied_bounds(placement, padding)
+        for placement in label_placements.values()
+    }
+
+    occupied_y: set[float] = set()
+    occupied_x: set[float] = set()
+    for path in connection_paths:
+        for index in range(len(path) - 1):
+            p1 = path[index]
+            p2 = path[index + 1]
+            if abs(p1[1] - p2[1]) < 1e-6 and abs(p1[0] - p2[0]) >= 1e-6:
+                occupied_y.add(_snap_to_grid(p1[1], half=True))
+            elif abs(p1[0] - p2[0]) < 1e-6 and abs(p1[1] - p2[1]) >= 1e-6:
+                occupied_x.add(_snap_to_grid(p1[0], half=True))
+
+    adjusted_paths: list[list[tuple[float, float]]] = [
+        list(path) for path in connection_paths
+    ]
+
+    # Iterate the rerouting loop until a full pass produces no changes.
+    # Rerouting one path to clear *its* nearest margin can push its
+    # segments across *another* label's margin, so a single pass is
+    # not enough when margins cluster closely.
+    for _ in range(6):
+        any_changed = False
+        for path_index in range(len(adjusted_paths)):
+            obstacles: list[tuple[float, float, float, float]] = [
+                margin
+                for ci, margin in own_margin_by_connection.items()
+                if ci != path_index
+            ]
+            current = adjusted_paths[path_index]
+            for _ in range(len(current) * 2):
+                rerouted = _reroute_one_collision(
+                    current, obstacles, padding, occupied_y
+                )
+                if rerouted is current:
+                    break
+                _record_horizontal_ys(rerouted, occupied_y)
+                _record_vertical_xs(rerouted, occupied_x)
+                current = rerouted
+            if current is not adjusted_paths[path_index]:
+                any_changed = True
+                adjusted_paths[path_index] = current
+        if not any_changed:
+            break
+
+    return adjusted_paths
+
+
+def _record_vertical_xs(
+    path: list[tuple[float, float]],
+    occupied_x: set[float],
+) -> None:
+    for index in range(len(path) - 1):
+        p1 = path[index]
+        p2 = path[index + 1]
+        if abs(p1[0] - p2[0]) < 1e-6 and abs(p1[1] - p2[1]) >= 1e-6:
+            occupied_x.add(_snap_to_grid(p1[0], half=True))
 
 
 def _avoid_node_intersections(
