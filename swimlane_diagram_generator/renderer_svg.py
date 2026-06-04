@@ -2273,7 +2273,7 @@ def _compute_base_levels(
     base_level = {node.id: 0 for node in diagram.nodes}
     topological_order = _topological_order(diagram.nodes, outgoing, incoming)
     if topological_order is None:
-        return _compute_feedback_aware_levels(diagram, incoming)
+        return _compute_feedback_aware_levels(diagram, incoming, outgoing)
 
     node_lane_index: dict[str, int] = {
         node.id: lane_index_by_id[node.lane_id] for node in diagram.nodes
@@ -2289,22 +2289,123 @@ def _compute_base_levels(
     return base_level
 
 
+def _find_feedback_edges(
+    outgoing: dict[str, list[str]],
+) -> set[tuple[str, str]]:
+    """Find back edges in the directed graph using iterative DFS.
+
+    A back edge is an edge ``(u, v)`` where ``v`` is an ancestor of ``u``
+    in the DFS tree (i.e., ``v`` is still in the current DFS path when we
+    traverse ``u -> v``). Back edges are precisely the edges that, once
+    removed, make the graph acyclic.
+
+    Declaration order is intentionally *not* used to classify feedback
+    edges: many forward-flow edges (e.g. a downstream node declared
+    before an upstream successor) are not actually feedback edges, and
+    treating them as such collapses the longest path computation and
+    pulls downstream nodes like Data 1 above the main flow in their
+    lane.
+    """
+    feedback_edges: set[tuple[str, str]] = set()
+    # 0 = unvisited, 1 = in current DFS path (gray), 2 = fully processed (black)
+    state: dict[str, int] = {}
+
+    for start in list(outgoing.keys()):
+        if state.get(start, 0) != 0:
+            continue
+        # Iterative DFS: stack entries are (node, next_neighbor_index_to_visit).
+        stack: list[tuple[str, int]] = [(start, 0)]
+        while stack:
+            node, idx = stack[-1]
+            if idx == 0:
+                # First time we see this node on this path; mark gray.
+                if state.get(node, 0) != 0:
+                    stack.pop()
+                    continue
+                state[node] = 1
+            neighbors = outgoing.get(node, [])
+            if idx < len(neighbors):
+                stack[-1] = (node, idx + 1)
+                neighbor = neighbors[idx]
+                neighbor_state = state.get(neighbor, 0)
+                if neighbor_state == 0:
+                    stack.append((neighbor, 0))
+                elif neighbor_state == 1:
+                    # Back edge: target is an ancestor in the current DFS path.
+                    feedback_edges.add((node, neighbor))
+            else:
+                # All neighbors processed; mark black and pop.
+                state[node] = 2
+                stack.pop()
+
+    return feedback_edges
+
+
 def _compute_feedback_aware_levels(
     diagram: Diagram,
     incoming: dict[str, list[str]],
+    outgoing: dict[str, list[str]],
 ) -> dict[str, int]:
-    # For cyclic flows, treat edges from later-declared nodes as feedback edges,
-    # so they don't force a strictly sequential vertical layout.
-    base_level = {node.id: 0 for node in diagram.nodes}
-    order_lookup = {node.id: node.order for node in diagram.nodes}
-    nodes_by_order = sorted(diagram.nodes, key=lambda node: node.order)
+    """Compute base levels for cyclic flows using the longest path on the DAG.
 
-    for node in nodes_by_order:
-        for predecessor in incoming[node.id]:
-            if order_lookup[predecessor] < node.order:
-                base_level[node.id] = max(
-                    base_level[node.id], base_level[predecessor] + 1
-                )
+    The previous implementation used node declaration order to classify
+    feedback edges, which incorrectly marked forward-flow edges as
+    feedback whenever the source was declared after the target. That
+    caused downstream nodes (e.g. ``data1``, which is reached via
+    ``s1 -> n1 -> n2 -> d1 -> n3 -> sub1 -> n4 -> data1``) to be
+    assigned a base level no higher than their immediate predecessor's
+    level, pulling them above the main flow in their lane.
+
+    The fix identifies true feedback edges (those participating in a
+    cycle) via DFS-based back-edge detection, removes them to obtain a
+    DAG, and computes the longest path on that DAG. ``_place_nodes``
+    then resolves the actual slot using lane-local and cross-lane
+    predecessor rules on top of these base levels.
+    """
+    base_level = {node.id: 0 for node in diagram.nodes}
+    feedback_edges = _find_feedback_edges(outgoing)
+
+    # In-degree in the DAG (edges that are not back edges).
+    in_degree: dict[str, int] = {node.id: 0 for node in diagram.nodes}
+    for source, neighbors in outgoing.items():
+        for target in neighbors:
+            if (source, target) not in feedback_edges:
+                in_degree[target] += 1
+
+    # Topological sort of the DAG using Kahn's algorithm. Ties are broken
+    # by declaration order so the result is deterministic.
+    order_lookup = {node.id: node.order for node in diagram.nodes}
+    ready: deque[str] = deque(
+        sorted(
+            (nid for nid, deg in in_degree.items() if deg == 0),
+            key=lambda nid: order_lookup[nid],
+        )
+    )
+    topo_order: list[str] = []
+    while ready:
+        node_id = ready.popleft()
+        topo_order.append(node_id)
+        for neighbor in outgoing.get(node_id, []):
+            if (node_id, neighbor) in feedback_edges:
+                continue
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                ready.append(neighbor)
+
+    # Longest path on the DAG. Nodes that live inside a strongly
+    # connected component but are not reachable from any source in the
+    # DAG would not appear in ``topo_order``; give them level 0.
+    visited: set[str] = set(topo_order)
+    for node_id in topo_order:
+        for predecessor in incoming[node_id]:
+            if (predecessor, node_id) in feedback_edges:
+                continue
+            base_level[node_id] = max(
+                base_level[node_id], base_level[predecessor] + 1
+            )
+    for node in diagram.nodes:
+        if node.id not in visited:
+            base_level[node.id] = 0
 
     return base_level
 
