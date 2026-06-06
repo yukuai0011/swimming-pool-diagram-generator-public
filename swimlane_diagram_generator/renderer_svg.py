@@ -197,6 +197,12 @@ def render_svg(diagram: Diagram) -> str:
     )
     line_jumps = _compute_line_jumps(connection_paths)
 
+    # Reroute vertical segments that pass through any node's bounding box.
+    # This runs after label margin avoidance because the detour introduces
+    # new horizontal segments that could violate label margins.
+    connection_paths = _avoid_node_vertical_intersections(connection_paths, boxes)
+    line_jumps = _compute_line_jumps(connection_paths)
+
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{_fmt(svg_width)}" height="{_fmt(svg_height)}" '
         f'viewBox="0 0 {_fmt(svg_width)} {_fmt(svg_height)}">',
@@ -741,6 +747,57 @@ def _avoid_node_intersections(
     return adjusted_paths
 
 
+def _avoid_node_vertical_intersections(
+    connection_paths: list[list[tuple[float, float]]],
+    boxes: dict[str, NodeBox],
+) -> list[list[tuple[float, float]]]:
+    """Reroute vertical segments that pass through any node's bounding box.
+
+    Runs after label margin avoidance to avoid introducing new horizontal
+    segments that could violate label margins. The detour introduces a
+    small horizontal jog to the left or right of the obstacle.
+    """
+    if not boxes:
+        return connection_paths
+
+    grid = _grid_size()
+    if grid <= 0.0:
+        return connection_paths
+    padding = grid
+
+    obstacles: list[tuple[float, float, float, float]] = []
+    for box in boxes.values():
+        half_w = box.width / 2.0
+        half_h = box.height / 2.0
+        obstacles.append((
+            box.x - half_w,
+            box.y - half_h,
+            box.x + half_w,
+            box.y + half_h,
+        ))
+
+    # Seed occupied_x with existing vertical segments so detours don't reuse them.
+    occupied_x: set[float] = set()
+    for path in connection_paths:
+        for index in range(len(path) - 1):
+            p1 = path[index]
+            p2 = path[index + 1]
+            if abs(p1[0] - p2[0]) < 1e-6 and abs(p1[1] - p2[1]) >= 1e-6:
+                occupied_x.add(_snap_to_grid(p1[0], half=True))
+
+    adjusted_paths: list[list[tuple[float, float]]] = []
+    for path in connection_paths:
+        current = list(path)
+        for _ in range(len(current) * 2):
+            rerouted = _reroute_vertical_collision(current, obstacles, padding, occupied_x)
+            if rerouted is current:
+                break
+            _record_vertical_xs(rerouted, occupied_x)
+            current = rerouted
+        adjusted_paths.append(current)
+    return adjusted_paths
+
+
 def _record_horizontal_ys(
     path: list[tuple[float, float]],
     occupied_y: set[float],
@@ -786,6 +843,44 @@ def _reroute_one_collision(
     return path
 
 
+def _reroute_vertical_collision(
+    path: list[tuple[float, float]],
+    obstacles: list[tuple[float, float, float, float]],
+    padding: float,
+    occupied_x: set[float],
+) -> list[tuple[float, float]]:
+    # A straight 2-point path is always a direct same-lane connection that
+    # starts and ends at node edges; it cannot pass through any obstacle.
+    if len(path) == 2:
+        return path
+    for index in range(len(path) - 1):
+        p1 = path[index]
+        p2 = path[index + 1]
+        if abs(p1[0] - p2[0]) >= 1e-6 or abs(p1[1] - p2[1]) < 1e-6:
+            continue
+        x = p1[0]
+        y_min = min(p1[1], p2[1])
+        y_max = max(p1[1], p2[1])
+        for left, top, right, bottom in obstacles:
+            if (
+                x > left + 1e-6
+                and x < right - 1e-6
+                and y_min < bottom - 1e-6
+                and y_max > top + 1e-6
+            ):
+                detour_x = _pick_detour_x(x, left, right, padding, occupied_x)
+                if detour_x is None:
+                    return path
+                detour_points = [
+                    (x, p1[1]),
+                    (detour_x, p1[1]),
+                    (detour_x, p2[1]),
+                    (x, p2[1]),
+                ]
+                return path[:index] + detour_points + path[index + 2 :]
+    return path
+
+
 def _pick_detour_y(
     original_y: float,
     top: float,
@@ -821,6 +916,46 @@ def _pick_detour_y(
         if abs(candidate - original_y) < 1e-6:
             continue
         if candidate in occupied_y:
+            continue
+        return candidate
+    return None
+
+
+def _pick_detour_x(
+    original_x: float,
+    left: float,
+    right: float,
+    padding: float,
+    occupied_x: set[float],
+) -> float | None:
+    """Pick a free x-coordinate for a vertical-segment detour.
+
+    Prefers the side of the obstacle closest to the original segment. If
+    that side is already in use by another connection's vertical segment,
+    tries the opposite side. If both are taken, walks outward in additional
+    grid steps until a free line is found.
+    """
+    candidates: list[float] = []
+    primary_left = (original_x - left) < (right - original_x)
+    if primary_left:
+        candidates.append(_snap_to_grid(left - padding, half=True))
+        candidates.append(_snap_to_grid(right + padding, half=True))
+    else:
+        candidates.append(_snap_to_grid(right + padding, half=True))
+        candidates.append(_snap_to_grid(left - padding, half=True))
+
+    for step in range(2, 12):
+        if primary_left:
+            candidates.append(_snap_to_grid(left - step * padding, half=True))
+            candidates.append(_snap_to_grid(right + step * padding, half=True))
+        else:
+            candidates.append(_snap_to_grid(right + step * padding, half=True))
+            candidates.append(_snap_to_grid(left - step * padding, half=True))
+
+    for candidate in candidates:
+        if abs(candidate - original_x) < 1e-6:
+            continue
+        if candidate in occupied_x:
             continue
         return candidate
     return None
@@ -919,6 +1054,48 @@ def _normalize_path(path: list[tuple[float, float]]) -> list[tuple[float, float]
             normalized.append(point)
 
     return normalized
+
+
+def _straighten_tiny_bends(
+    connection_paths: list[list[tuple[float, float]]],
+    grid_size: float,
+) -> list[list[tuple[float, float]]]:
+    """Flatten the central vertical step in cross-lane paths when y difference is tiny.
+
+    When a cross-lane connector starts and ends at almost the same y-coordinate,
+    the ├┤ (zig-zag) path is unnecessarily jagged. If the start and end horizontal
+    arms differ by less than ``grid_size``, replace the four-point zig-zag with a
+    straight horizontal line from the source-side anchor to the target-side anchor,
+    routed through a single midpoint.
+    """
+    if grid_size <= 0.0:
+        return connection_paths
+    threshold = grid_size * 0.75
+
+    adjusted: list[list[tuple[float, float]]] = []
+    for path in connection_paths:
+        if len(path) != 4:
+            adjusted.append(path)
+            continue
+        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = path
+        # Check that this is a cross-lane zig-zag: horizontal, vertical, horizontal.
+        if abs(y0 - y1) >= 1e-6 or abs(y2 - y3) >= 1e-6:
+            adjusted.append(path)
+            continue
+        if abs(x1 - x2) >= 1e-6 or abs(y1 - y2) < 1e-6:
+            adjusted.append(path)
+            continue
+        if abs(y0 - y3) <= threshold:
+            # Straighten by keeping the start and end points and using a midpoint
+            mid_y = _snap_to_grid((y0 + y3) / 2.0, half=True)
+            adjusted.append(
+                _snap_path_to_grid(
+                    [(x0, y0), (x3, mid_y), (x3, y3)], half=True
+                )
+            )
+        else:
+            adjusted.append(path)
+    return adjusted
 
 
 def _points_equal(first: tuple[float, float], second: tuple[float, float]) -> bool:
@@ -1139,13 +1316,23 @@ def _route_connection(
     cross_y_offset = _clamp_node_offset(
         min(source.height, target.height), hint.cross_y_offset
     )
+
+    start_y = source.y + source_offset + cross_y_offset
+    end_y = target.y + target_offset + cross_y_offset
+
+    # Same-row cross-lane: straighten the horizontal arm so the connector
+    # is a single straight horizontal line rather than a zig-zag.
+    if abs(source.y - target.y) < 1e-6:
+        common_y = _snap_to_grid((start_y + end_y) / 2, half=True)
+        start_y = end_y = common_y
+
     start = (
         source.x + direction * source.width / 2,
-        source.y + source_offset + cross_y_offset,
+        start_y,
     )
     end = (
         target.x - direction * target.width / 2,
-        target.y + target_offset + cross_y_offset,
+        end_y,
     )
 
     mid_x = (
