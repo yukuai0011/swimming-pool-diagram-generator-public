@@ -1044,9 +1044,7 @@ class SvgRendererTests(unittest.TestCase):
             lane_borders_x=lane_borders_x,
         )
         placements = _compute_label_placements(diagram, paths, boxes)
-        adjusted_paths = _avoid_label_margin_intersections(
-            paths, placements, grid_size
-        )
+        adjusted_paths = _avoid_label_margin_intersections(paths, placements, grid_size)
 
         padding = grid_size
         for placement in placements.values():

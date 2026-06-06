@@ -789,7 +789,9 @@ def _avoid_node_vertical_intersections(
     for path in connection_paths:
         current = list(path)
         for _ in range(len(current) * 2):
-            rerouted = _reroute_vertical_collision(current, obstacles, padding, occupied_x)
+            rerouted = _reroute_vertical_collision(
+                current, obstacles, padding, occupied_x
+            )
             if rerouted is current:
                 break
             _record_vertical_xs(rerouted, occupied_x)
@@ -1089,9 +1091,7 @@ def _straighten_tiny_bends(
             # Straighten by keeping the start and end points and using a midpoint
             mid_y = _snap_to_grid((y0 + y3) / 2.0, half=True)
             adjusted.append(
-                _snap_path_to_grid(
-                    [(x0, y0), (x3, mid_y), (x3, y3)], half=True
-                )
+                _snap_path_to_grid([(x0, y0), (x3, mid_y), (x3, y3)], half=True)
             )
         else:
             adjusted.append(path)
@@ -1851,14 +1851,12 @@ def _select_best_label_candidate(
         # that overlaps a node, and a horizontally rendered label breaks
         # ties in favour of readability.
         horizontal_bias = 0.0 if candidate.orientation == "horizontal" else 1.0
-        scored.append(
-            (
-                (region_overlap, line_overlap, horizontal_bias, index),
-                candidate,
-                region_overlap,
-                line_overlap,
-            )
-        )
+        scored.append((
+            (region_overlap, line_overlap, horizontal_bias, index),
+            candidate,
+            region_overlap,
+            line_overlap,
+        ))
 
     scored.sort(key=lambda item: item[0])
 
@@ -2587,9 +2585,7 @@ def _compute_feedback_aware_levels(
         for predecessor in incoming[node_id]:
             if (predecessor, node_id) in feedback_edges:
                 continue
-            base_level[node_id] = max(
-                base_level[node_id], base_level[predecessor] + 1
-            )
+            base_level[node_id] = max(base_level[node_id], base_level[predecessor] + 1)
     for node in diagram.nodes:
         if node.id not in visited:
             base_level[node.id] = 0
