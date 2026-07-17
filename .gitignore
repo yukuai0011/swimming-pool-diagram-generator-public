@@ -208,3 +208,7 @@ __marimo__/
 
 references/
 output/
+# Bun / TypeScript
+node_modules/
+dist/
+bun.lockb
